@@ -1,0 +1,72 @@
+cmake_minimum_required(VERSION 3.16)
+project(BasaltDB C)
+
+find_package(Threads REQUIRED)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+
+add_library(BasaltDB STATIC
+    src/jobdb.c
+    src/jobdb_codec.c
+    src/jobdb_crc32c.c
+    src/jobdb_file.c
+    src/jobdb_lock.c
+)
+target_include_directories(BasaltDB PUBLIC include PRIVATE src)
+if (MSVC)
+  target_compile_definitions(BasaltDB PRIVATE _CRT_SECURE_NO_WARNINGS)
+  target_compile_options(BasaltDB PRIVATE /W4 /WX)
+else()
+  target_compile_options(BasaltDB PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+
+enable_testing()
+add_executable(BasaltDB_tests tests/test_jobdb.c)
+target_link_libraries(BasaltDB_tests PRIVATE BasaltDB)
+if (MSVC)
+  target_compile_options(BasaltDB_tests PRIVATE /UNDEBUG)
+else()
+  target_compile_options(BasaltDB_tests PRIVATE -UNDEBUG)
+endif()
+if (NOT MSVC)
+  target_link_libraries(BasaltDB_tests PRIVATE m)
+endif()
+add_test(NAME BasaltDB_tests COMMAND BasaltDB_tests)
+
+add_library(BasaltCore STATIC src/jobcore.c)
+target_sources(BasaltCore PRIVATE src/jobcore_cron.c)
+target_include_directories(BasaltCore PUBLIC include)
+target_link_libraries(BasaltCore PUBLIC BasaltDB Threads::Threads)
+if (MSVC)
+  target_compile_definitions(BasaltCore PRIVATE _CRT_SECURE_NO_WARNINGS)
+  target_compile_options(BasaltCore PRIVATE /W4 /WX)
+else()
+  target_compile_options(BasaltCore PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+
+add_library(basalt_core_shared SHARED src/jobcore.c src/jobcore_cron.c)
+target_include_directories(basalt_core_shared PUBLIC include)
+target_link_libraries(basalt_core_shared PUBLIC BasaltDB Threads::Threads)
+if (MSVC)
+  target_compile_definitions(basalt_core_shared PRIVATE _CRT_SECURE_NO_WARNINGS)
+  target_compile_options(basalt_core_shared PRIVATE /W4 /WX)
+  target_link_options(basalt_core_shared PRIVATE /EXPORT:jobcore_create /EXPORT:jobcore_destroy /EXPORT:jobcore_start /EXPORT:jobcore_stop /EXPORT:jobcore_enqueue)
+else()
+  target_compile_options(basalt_core_shared PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+
+add_executable(BasaltCore_tests tests/test_jobcore.c)
+target_link_libraries(BasaltCore_tests PRIVATE BasaltCore)
+if (MSVC)
+  target_compile_options(BasaltCore_tests PRIVATE /W4 /WX)
+else()
+  target_compile_options(BasaltCore_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME BasaltCore_tests COMMAND BasaltCore_tests)
+if (CMAKE_C_FLAGS MATCHES "sanitize")
+  set_tests_properties(BasaltDB_tests PROPERTIES ENVIRONMENT "JOBDB_SKIP_MP=1")
+endif()
+add_executable(BasaltDB_fuzz tests/fuzz_jobdb.c)
+target_link_libraries(BasaltDB_fuzz PRIVATE BasaltDB)

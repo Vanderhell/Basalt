@@ -1,0 +1,15 @@
+/build-asan
+/build-asan
+/build-asan
+/build
+/build/
+/build-asan/
+/build-release/
+/clang-asan/
+/test.out
+/jobcore-test/
+/asan.err
+/asan.out
+**/bin/
+**/obj/
+/build

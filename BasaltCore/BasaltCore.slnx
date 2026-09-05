@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="BasaltCore.csproj" />
+  <Project Path="..\BasaltCore.Native\BasaltCore.Native.csproj" />
+</Solution>
