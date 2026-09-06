@@ -66,8 +66,8 @@ int main(void) {
     assert(jobdb_create("jobcore-test", &db) == JOBDB_OK);
     assert(jobcore_create(db, 2, 10, &core) == JOBDB_OK);
     assert(jobcore_register_handler(core, 42, handler, NULL) == JOBDB_OK);
-    assert(jobcore_enqueue(core, 42, "job", 3, 7, 1, 1, &id) == JOBDB_OK);
-    assert(jobcore_enqueue(core, 99, NULL, 0, 1, 1, 1, &missing) == JOBDB_OK);
+    assert(jobcore_enqueue(core, 42, "job", 3, 7, now, 1, &id) == JOBDB_OK);
+    assert(jobcore_enqueue(core, 99, NULL, 0, 1, now, 1, &missing) == JOBDB_OK);
     memset(&delayed, 0, sizeof delayed); delayed.schedule_id = 50; delayed.job_type = 42; delayed.type = JOBCORE_SCHEDULE_DELAYED; delayed.first_fire_at = now + 1; delayed.payload = "job"; delayed.payload_size = 3; delayed.payload_version = 7;
     assert(jobcore_schedule_create(core, &delayed) == JOBDB_OK);
     memset(&fixed_rate, 0, sizeof fixed_rate); fixed_rate.schedule_id = 51; fixed_rate.job_type = 42; fixed_rate.type = JOBCORE_SCHEDULE_INTERVAL; fixed_rate.first_fire_at = now + 1; fixed_rate.interval = 1; fixed_rate.interval_mode = JOBCORE_FIXED_RATE; fixed_rate.max_occurrences = 1; fixed_rate.payload = "job"; fixed_rate.payload_size = 3; fixed_rate.payload_version = 7;

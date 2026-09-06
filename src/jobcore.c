@@ -36,7 +36,7 @@ static unsigned process_id(void) { return (unsigned)getpid(); }
 
 typedef struct { uint64_t type; jobcore_handler_fn fn; void *data; } core_handler_t;
 typedef struct { jobcore_t *core; jobdb_worker_id_t worker; uint64_t execution_id; uint64_t token; volatile int stop; core_thread_t thread; int started; } heartbeat_t;
-struct jobcore { jobdb_t *db; uint32_t worker_count; int64_t lease_duration; uint32_t grace_ms; volatile int stopping; int started; uint64_t next_execution_id; uint64_t identity; core_mutex_t mutex; uint32_t handler_count; core_handler_t handlers[MAX_HANDLERS]; core_thread_t *threads; core_thread_t scheduler; int scheduler_started; };
+struct jobcore { jobdb_t *db; uint32_t worker_count; int64_t lease_duration; uint32_t grace_ms; volatile int stopping; int started; uint64_t identity; core_mutex_t mutex; uint32_t handler_count; core_handler_t handlers[MAX_HANDLERS]; core_thread_t *threads; core_thread_t scheduler; int scheduler_started; };
 typedef struct { uint32_t policy, max_attempts, jitter, reserved; int64_t initial_delay, max_delay; double backoff_factor; } retry_record_t;
 typedef struct { uint64_t workflow_id, execution_id, node_id; uint32_t policy, dependency_count; uint64_t dependencies[8]; } workflow_record_t;
 static void workflow_progress(jobcore_t *, uint64_t);
@@ -115,7 +115,7 @@ static void process_one(jobcore_t *c, const jobdb_worker_id_t *worker) {
     jobcore_execution_context_t context; heartbeat_t heartbeat; int64_t started_at = current_time();
     jobdb_result_t result = jobdb_claim_next(c->db, worker, started_at, c->lease_duration, &execution);
     if (result != JOBDB_OK) { sleep_ms(2); return; }
-    result = jobdb_execution_transition(c->db, execution.execution_id, execution.revision, JOBDB_EXEC_RUNNING, &execution.revision);
+    result = jobdb_execution_start(c->db, execution.execution_id, worker, execution.fencing_token, (int64_t)time(NULL), &execution.revision);
     if (result != JOBDB_OK) return;
     mutex_lock(&c->mutex); { core_handler_t *registered = find_handler(c, execution.job_definition_id); if (registered) handler = *registered; } mutex_unlock(&c->mutex);
     memset(&context, 0, sizeof context); context.execution_id = execution.execution_id; context.job_type = execution.job_definition_id; context.attempt = execution.attempt; context.fencing_token = execution.fencing_token; context.worker = *worker; context.cancellation_requested = &c->stopping;
@@ -137,11 +137,8 @@ static void process_one(jobcore_t *c, const jobdb_worker_id_t *worker) {
 }
 
 static uint64_t allocate_execution_id(jobcore_t *c) {
-    uint64_t id;
-    mutex_lock(&c->mutex);
-    id = c->next_execution_id == UINT64_MAX ? 0 : c->next_execution_id++;
-    mutex_unlock(&c->mutex);
-    return id;
+    uint64_t id=0;
+    return jobdb_allocate_execution_id(c->db,&id)==JOBDB_OK?id:0;
 }
 
 static int64_t latest_finished_for_schedule(jobcore_t *c, uint64_t schedule_id) {
@@ -242,12 +239,10 @@ return NULL;
 }
 
 jobdb_result_t jobcore_create_ex(jobdb_t *db, uint32_t workers, int64_t lease, uint32_t grace_ms, jobcore_t **out) {
-    jobcore_t *c; uint64_t ids[4096], max_id = 0; size_t count = 0, i;
+    jobcore_t *c;
     if (!db || !out || !workers || lease <= 0) return JOBDB_ERR_INVALID_ARGUMENT;
     c = (jobcore_t *)calloc(1, sizeof *c); if (!c) return JOBDB_ERR_INTERNAL;
-    c->db = db; c->worker_count = workers; c->lease_duration = lease; c->grace_ms = grace_ms; c->identity = ((uint64_t)process_id() << 32) ^ (uint64_t)time(NULL) ^ (uintptr_t)c; c->next_execution_id = 1;
-    if (jobdb_list_record_ids(db, 3, ids, 4096, &count) == JOBDB_OK) for (i = 0; i < count; ++i) if (ids[i] > max_id) max_id = ids[i];
-    if (max_id == UINT64_MAX) { free(c); return JOBDB_ERR_LIMIT; } c->next_execution_id = max_id + 1; mutex_init(&c->mutex); *out = c; return JOBDB_OK;
+    c->db = db; c->worker_count = workers; c->lease_duration = lease; c->grace_ms = grace_ms; c->identity = ((uint64_t)process_id() << 32) ^ (uint64_t)time(NULL) ^ (uintptr_t)c; mutex_init(&c->mutex); *out = c; return JOBDB_OK;
 }
 jobdb_result_t jobcore_create(jobdb_t *db, uint32_t workers, int64_t lease, jobcore_t **out) { return jobcore_create_ex(db, workers, lease, 1000, out); }
 void jobcore_destroy(jobcore_t *c) { if (c) { (void)jobcore_stop(c); mutex_destroy(&c->mutex); free(c); } }
@@ -283,7 +278,7 @@ jobdb_result_t jobcore_stop_with_grace(jobcore_t *c, uint32_t grace_ms) { uint32
 jobdb_result_t jobcore_stop(jobcore_t *c) { return c ? jobcore_stop_with_grace(c, c->grace_ms) : JOBDB_ERR_INVALID_ARGUMENT; }
 jobdb_result_t jobcore_register_handler(jobcore_t *c, uint64_t type, jobcore_handler_fn fn, void *data) { core_handler_t *h; if (!c || !type || !fn) return JOBDB_ERR_INVALID_ARGUMENT; mutex_lock(&c->mutex); h = find_handler(c, type); if (!h && c->handler_count < MAX_HANDLERS) h = &c->handlers[c->handler_count++]; if (!h) { mutex_unlock(&c->mutex); return JOBDB_ERR_LIMIT; } h->type = type; h->fn = fn; h->data = data; mutex_unlock(&c->mutex); return JOBDB_OK; }
 jobdb_result_t jobcore_register_handler_name(jobcore_t *c, const char *name, jobcore_handler_fn fn, void *data, uint64_t *out) { uint64_t type; if (!name || !*name) return JOBDB_ERR_INVALID_ARGUMENT; type = hash_name(name); if (out) *out = type; return jobcore_register_handler(c, type, fn, data); }
-jobdb_result_t jobcore_enqueue(jobcore_t *c, uint64_t type, const void *payload, uint32_t size, uint32_t version, int64_t now, uint32_t max_attempts, uint64_t *out) { jobdb_execution_t e; uint64_t id, revision; jobdb_result_t result; if (!c || !type || (size && !payload) || !out) return JOBDB_ERR_INVALID_ARGUMENT; mutex_lock(&c->mutex); if (c->next_execution_id == UINT64_MAX) { mutex_unlock(&c->mutex); return JOBDB_ERR_LIMIT; } id = c->next_execution_id++; mutex_unlock(&c->mutex); memset(&e, 0, sizeof e); e.execution_id = id; e.job_definition_id = type; e.state = JOBDB_EXEC_CREATED; e.created_at = now; e.eligible_at = now; e.max_attempts = max_attempts ? max_attempts : 1; result = jobdb_execution_create(c->db, &e); if (result != JOBDB_OK) return result; result = store_payload(c, PAYLOAD_RECORD_TYPE, id, type, version, payload, size); if (result != JOBDB_OK) return result; result = jobdb_execution_transition(c->db, id, 1, JOBDB_EXEC_READY, &revision); if (result != JOBDB_OK) return result; *out = id; return JOBDB_OK; }
+jobdb_result_t jobcore_enqueue(jobcore_t *c, uint64_t type, const void *payload, uint32_t size, uint32_t version, int64_t now, uint32_t max_attempts, uint64_t *out) { jobdb_execution_t e; uint64_t id, revision; jobdb_result_t result; if (!c || !type || (size && !payload) || !out) return JOBDB_ERR_INVALID_ARGUMENT; id=allocate_execution_id(c);if(!id)return JOBDB_ERR_LIMIT; memset(&e, 0, sizeof e); e.execution_id = id; e.job_definition_id = type; e.state = JOBDB_EXEC_CREATED; e.created_at = now; e.eligible_at = now; e.max_attempts = max_attempts ? max_attempts : 1; result = jobdb_execution_create(c->db, &e); if (result != JOBDB_OK) return result; result = store_payload(c, PAYLOAD_RECORD_TYPE, id, type, version, payload, size); if (result != JOBDB_OK) return result; result = jobdb_execution_transition(c->db, id, 1, JOBDB_EXEC_READY, &revision); if (result != JOBDB_OK) return result; *out = id; return JOBDB_OK; }
 jobdb_result_t jobcore_enqueue_name(jobcore_t *c, const char *name, const void *payload, uint32_t size, uint32_t version, int64_t now, uint32_t max_attempts, uint64_t *out) { if (!name || !*name) return JOBDB_ERR_INVALID_ARGUMENT; return jobcore_enqueue(c, hash_name(name), payload, size, version, now, max_attempts, out); }
 jobdb_result_t jobcore_enqueue_with_retry(jobcore_t *c, uint64_t type, const void *payload, uint32_t size, uint32_t version, int64_t now, const jobcore_retry_spec_t *spec, uint64_t *out) { retry_record_t record; jobdb_result_t result; if (!spec || spec->policy < JOBCORE_RETRY_NONE || spec->policy > JOBCORE_RETRY_EXPONENTIAL_WITH_JITTER || spec->max_attempts == 0 || spec->initial_delay < 0 || spec->max_delay < 0 || spec->jitter > 86400u) return JOBDB_ERR_INVALID_ARGUMENT; result = jobcore_enqueue(c, type, payload, size, version, now, spec->max_attempts, out); if (result != JOBDB_OK || spec->policy == JOBCORE_RETRY_NONE) return result; memset(&record, 0, sizeof record); record.policy = (uint32_t)spec->policy; record.max_attempts = spec->max_attempts; record.initial_delay = spec->initial_delay; record.max_delay = spec->max_delay; record.backoff_factor = spec->backoff_factor; record.jitter = spec->jitter; return jobdb_record_create(c->db, RETRY_RECORD_TYPE, *out, &record, (uint32_t)sizeof record); }
 jobdb_result_t jobcore_schedule_create(jobcore_t *c, const jobcore_schedule_spec_t *spec) {

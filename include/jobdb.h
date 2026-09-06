@@ -61,7 +61,21 @@ typedef enum jobdb_failure_point {
     JOBDB_FAILURE_AFTER_COMMIT,
     JOBDB_FAILURE_DISK_FULL,
     JOBDB_FAILURE_CHECKPOINT_BEFORE_MANIFEST,
-    JOBDB_FAILURE_CHECKPOINT_AFTER_MANIFEST
+    JOBDB_FAILURE_CHECKPOINT_AFTER_MANIFEST,
+    JOBDB_FAILURE_BEFORE_WAL_BEGIN,
+    JOBDB_FAILURE_AFTER_WAL_BEGIN,
+    JOBDB_FAILURE_AFTER_WAL_OPERATIONS,
+    JOBDB_FAILURE_AFTER_WAL_PRECOMMIT_SYNC,
+    JOBDB_FAILURE_AFTER_COMMIT_WRITE,
+    JOBDB_FAILURE_AFTER_COMMIT_SYNC,
+    JOBDB_FAILURE_DURING_APPLY,
+    JOBDB_FAILURE_AFTER_APPLY,
+    JOBDB_FAILURE_AFTER_APPLY_SYNC,
+    JOBDB_FAILURE_BEFORE_MANIFEST_WRITE,
+    JOBDB_FAILURE_AFTER_MANIFEST_WRITE,
+    JOBDB_FAILURE_AFTER_MANIFEST_SYNC,
+    JOBDB_FAILURE_BEFORE_WAL_TRUNCATE,
+    JOBDB_FAILURE_AFTER_WAL_TRUNCATE
 } jobdb_failure_point_t;
 
 typedef enum jobdb_result {
@@ -109,6 +123,10 @@ jobdb_result_t jobdb_execution_transition(jobdb_t *db, uint64_t execution_id,
                                           uint64_t expected_revision,
                                           jobdb_execution_state_t new_state,
                                           uint64_t *out_revision);
+jobdb_result_t jobdb_execution_start(jobdb_t *db, uint64_t execution_id,
+                                      const jobdb_worker_id_t *worker,
+                                      uint64_t fencing_token, int64_t now,
+                                      uint64_t *out_revision);
 jobdb_result_t jobdb_claim_next(jobdb_t *db, const jobdb_worker_id_t *worker,
                                 int64_t now, int64_t lease_duration,
                                 jobdb_execution_t *out_execution);
@@ -139,6 +157,7 @@ jobdb_result_t jobdb_apply_retention(jobdb_t *db, int64_t now,
                                      const jobdb_retention_t *retention,
                                      uint32_t *out_deleted);
 jobdb_result_t jobdb_checkpoint(jobdb_t *db);
+jobdb_result_t jobdb_allocate_execution_id(jobdb_t *db, uint64_t *out_execution_id);
 jobdb_result_t jobdb_list_record_ids(jobdb_t *db, uint32_t record_type,
                                      uint64_t *ids, size_t capacity,
                                      size_t *out_count);

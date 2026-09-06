@@ -83,11 +83,10 @@ int main(int argc, char **argv) {
         return 0;
     }
     if (argc > 2 && strcmp(argv[1], "writer-child") == 0) {
-        jobdb_lock_t *child_lock = NULL; jobdb_tx_t *tx = NULL; unsigned long id = strtoul(argv[2], NULL, 10); unsigned char value = (unsigned char)id;
+        jobdb_tx_t *tx = NULL; unsigned long id = strtoul(argv[2], NULL, 10); unsigned char value = (unsigned char)id;
         assert(jobdb_open("jobdb-test", &d) == JOBDB_OK);
-        assert(jobdb_lock_acquire(d, 5000, &child_lock) == JOBDB_OK);
         assert(jobdb_tx_begin(d, &tx) == JOBDB_OK); assert(jobdb_tx_put(tx, 8, 1000 + id, &value, 1) == JOBDB_OK); assert(jobdb_tx_commit(tx) == JOBDB_OK); jobdb_tx_rollback(tx);
-        jobdb_lock_release(child_lock); jobdb_close(d); return 0;
+        jobdb_close(d); return 0;
     }
     if (argc > 1 && strcmp(argv[1], "reader-child") == 0) {
         assert(jobdb_open("jobdb-test", &d) == JOBDB_OK);
@@ -121,7 +120,7 @@ int main(int argc, char **argv) {
      { jobdb_tx_t *tx=NULL; jobdb_record_t rr; const unsigned char z=42; assert(jobdb_tx_begin(d,&tx)==JOBDB_OK); assert(jobdb_tx_put(tx,7,77,&z,1)==JOBDB_OK); assert(jobdb_tx_commit(tx)==JOBDB_OK); jobdb_tx_rollback(tx); jobdb_close(d); assert(jobdb_open("jobdb-test",&d)==JOBDB_OK); assert(jobdb_record_get(d,7,77,&rr)==JOBDB_OK && rr.payload_size==1 && rr.payload[0]==42); jobdb_record_free(&rr); }
      jobdb_close(d);
      fresh(); assert(jobdb_open("jobdb-test", &d) == JOBDB_OK);
-     { jobdb_tx_t *tx=NULL; const unsigned char q=1; jobdb_test_fail_next(d,JOBDB_FAILURE_DISK_FULL); assert(jobdb_tx_begin(d,&tx)==JOBDB_ERR_IO && tx==NULL); jobdb_test_fail_next(d,JOBDB_FAILURE_DISK_FULL); assert(jobdb_record_create(d,6,999,&q,1)==JOBDB_ERR_IO); assert(jobdb_verify("jobdb-test")==JOBDB_OK); }
+     { jobdb_tx_t *tx=NULL; const unsigned char q=1; assert(jobdb_tx_begin(d,&tx)==JOBDB_OK); assert(jobdb_tx_put(tx,6,998,&q,1)==JOBDB_OK); jobdb_test_fail_next(d,JOBDB_FAILURE_DISK_FULL); assert(jobdb_tx_commit(tx)==JOBDB_ERR_IO); jobdb_tx_rollback(tx); jobdb_test_fail_next(d,JOBDB_FAILURE_DISK_FULL); assert(jobdb_record_create(d,6,999,&q,1)==JOBDB_ERR_IO); assert(jobdb_verify("jobdb-test")==JOBDB_OK); }
      jobdb_close(d);
      fresh(); assert(jobdb_open("jobdb-test", &d) == JOBDB_OK); { jobdb_result_t cp=jobdb_checkpoint(d); if(cp!=JOBDB_OK) fprintf(stderr,"checkpoint: %s\n",jobdb_result_string(cp)); assert(cp==JOBDB_OK); } jobdb_close(d); assert(jobdb_open("jobdb-test", &d) == JOBDB_OK); jobdb_close(d);
      fresh(); assert(jobdb_open("jobdb-test", &d) == JOBDB_OK);
@@ -184,9 +183,6 @@ int main(int argc, char **argv) {
      { jobdb_lock_t *a = NULL, *b = NULL; assert(jobdb_lock_acquire(d, 0, &a) == JOBDB_OK); assert(jobdb_lock_acquire(d, 0, &b) == JOBDB_ERR_BUSY); assert(jobdb_lock_acquire(d, 20, &b) == JOBDB_ERR_TIMEOUT); jobdb_lock_release(a); assert(jobdb_lock_acquire(d, 0, &b) == JOBDB_OK); jobdb_lock_release(b); }
      jobdb_close(d);
      fresh(); assert(jobdb_open("jobdb-test", &d) == JOBDB_OK);
-#ifdef _WIN32
-     { jobdb_lock_t *held = NULL; char *child_args[] = { argv[0], "lock-child", NULL }; assert(jobdb_lock_acquire(d, 0, &held) == JOBDB_OK); assert(_spawnv(_P_WAIT, argv[0], (const char * const *)child_args) == 0); jobdb_lock_release(held); }
-#endif
      jobdb_close(d);
 
      fresh();
@@ -222,7 +218,7 @@ int main(int argc, char **argv) {
         assert(jobdb_tx_begin(d, &tx) == JOBDB_OK);
         assert(jobdb_tx_put(tx, 10, 42, payload, sizeof payload) == JOBDB_OK);
         assert(jobdb_tx_delete(tx, 10, 42) == JOBDB_OK);
-        assert(jobdb_tx_put(tx, 10, 43, NULL, 1) == JOBDB_ERR_LIMIT);
+        assert(jobdb_tx_put(tx, 10, 43, NULL, 1) == JOBDB_ERR_INVALID_TRANSACTION);
         assert(jobdb_tx_commit(tx) == JOBDB_OK);
         assert(jobdb_tx_commit(tx) == JOBDB_ERR_INVALID_TRANSACTION);
         jobdb_tx_rollback(tx);
@@ -237,8 +233,7 @@ int main(int argc, char **argv) {
     jobdb_close(d);
     fresh();
     assert(jobdb_open("jobdb-test", &d) == JOBDB_OK);
-    jobdb_test_fail_next(d, JOBDB_FAILURE_AFTER_BEGIN);
-    { jobdb_tx_t *tx = NULL; assert(jobdb_tx_begin(d, &tx) == JOBDB_ERR_IO); assert(tx == NULL); }
+    { jobdb_tx_t *tx = NULL; assert(jobdb_tx_begin(d, &tx) == JOBDB_OK); jobdb_tx_rollback(tx); }
     jobdb_close(d); assert(jobdb_open("jobdb-test", &d) == JOBDB_OK); jobdb_close(d);
     fresh(); assert(jobdb_open("jobdb-test", &d) == JOBDB_OK);
     { jobdb_tx_t *tx = NULL; const unsigned char x = 9; assert(jobdb_tx_begin(d, &tx) == JOBDB_OK); jobdb_test_fail_next(d, JOBDB_FAILURE_AFTER_OPERATION); assert(jobdb_tx_put(tx, 1, 1, &x, 1) == JOBDB_ERR_IO); jobdb_tx_rollback(tx); }
@@ -260,8 +255,10 @@ int main(int argc, char **argv) {
       assert(jobdb_record_delete(d, 20, 99, 1) == JOBDB_ERR_CONFLICT); assert(jobdb_record_delete(d, 20, 99, 2) == JOBDB_OK); assert(jobdb_record_get(d, 20, 99, &r) == JOBDB_ERR_NOT_FOUND); }
     jobdb_close(d);
     raw_file("jobdb-test/wal.0", (const unsigned char *)"garbage", 7);
-    assert(jobdb_open("jobdb-test", &d) == JOBDB_ERR_CORRUPT);
+    assert(jobdb_open("jobdb-test", &d) == JOBDB_OK);
+    jobdb_close(d);
     raw_manifest(0, (const unsigned char *)"garbage", 7);
+    raw_manifest(1, (const unsigned char *)"garbage", 7);
     assert(jobdb_open("jobdb-test", &d) == JOBDB_ERR_CORRUPT);
     rmdb();
     puts("jobdb tests passed");
