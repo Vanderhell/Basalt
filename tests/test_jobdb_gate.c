@@ -34,6 +34,9 @@ static int wal_test(void) {
     { unsigned char h[48]={0}, payload[2]={9,9}; memcpy(h,"JOBDBWAL",8);put_u32(h+8,1);put_u32(h+12,2);put_u64(h+16,56);put_u64(h+24,99);put_u32(h+32,8);put_u64(h+36,3);put_u32(h+44,4);f=fopen(wal,"ab");assert(f);assert(fwrite(h,1,sizeof h,f)==sizeof h&&fwrite(payload,1,sizeof payload,f)==sizeof payload);fclose(f);assert(jobdb_open(path,&db)==JOBDB_OK);jobdb_close(db);db=NULL;}
     { unsigned char h[48]={0}, payload[4]={1,2,3,4}, crc[2]={0,0}; memcpy(h,"JOBDBWAL",8);put_u32(h+8,1);put_u32(h+12,2);put_u64(h+16,56);put_u64(h+24,100);put_u32(h+32,8);put_u64(h+36,4);put_u32(h+44,4);f=fopen(wal,"ab");assert(f);assert(fwrite(h,1,sizeof h,f)==sizeof h&&fwrite(payload,1,sizeof payload,f)==sizeof payload&&fwrite(crc,1,sizeof crc,f)==sizeof crc);fclose(f);assert(jobdb_open(path,&db)==JOBDB_OK);jobdb_close(db);db=NULL;}
     assert(jobdb_open(path,&db)==JOBDB_OK); x=10; assert(jobdb_record_create(db,8,3,&x,1)==JOBDB_OK); jobdb_close(db); db=NULL;
+    assert(jobdb_open(path,&db)==JOBDB_OK); assert(jobdb_checkpoint(db)==JOBDB_OK); jobdb_close(db); db=NULL;
+    f=fopen(wal,"rb"); assert(f); fseek(f,0,SEEK_END); assert(ftell(f)==0); fclose(f);
+    assert(jobdb_open(path,&db)==JOBDB_OK); x=11; assert(jobdb_record_create(db,8,4,&x,1)==JOBDB_OK); jobdb_close(db); db=NULL;
     memcpy(bad,"JOBDBWAL",8);put_u32(bad+8,1);put_u32(bad+12,2);put_u64(bad+16,52);put_u64(bad+24,101);put_u32(bad+32,8);put_u64(bad+36,5);put_u32(bad+44,0);
     f=fopen(wal,"ab"); assert(f); assert(fwrite(bad,1,sizeof bad,f)==sizeof bad); fclose(f);
     assert(jobdb_open(path,&db)==JOBDB_ERR_CORRUPT);
@@ -56,9 +59,30 @@ static int transaction_test(void) {
     assert(jobdb_tx_commit(tx)==JOBDB_OK); jobdb_tx_rollback(tx); assert(jobdb_record_get(db,8,128,&r)==JOBDB_OK); jobdb_record_free(&r); assert(jobdb_verify(path)==JOBDB_OK); jobdb_close(db); return 0;
 }
 static int corruption_test(void) {
-    char path[256], record[320]; jobdb_t *db=NULL; unsigned char x=4; FILE *f;
+    char path[256], record[320], wal[320]; jobdb_t *db=NULL; unsigned char x=4; FILE *f;
     path_for(path,sizeof path,"corruption"); snprintf(record,sizeof record,"%s/record.8.1",path); make_db(path,&db); assert(jobdb_record_create(db,8,1,&x,1)==JOBDB_OK); jobdb_close(db);
-    f=fopen(record,"r+b"); assert(f); assert(fputc('X',f)!=EOF); fclose(f); assert(jobdb_verify(path)==JOBDB_ERR_CORRUPT); return 0;
+    f=fopen(record,"r+b"); assert(f); assert(fputc('X',f)!=EOF); fclose(f); assert(jobdb_verify(path)==JOBDB_ERR_CORRUPT);
+    {
+        const unsigned cases=5;
+        for (unsigned k=0;k<cases;k++) {
+            unsigned char h[52]={0}; char p[256];
+            path_for(p,sizeof p,"wal-corruption"); assert(jobdb_create(p,&db)==JOBDB_OK); jobdb_close(db); db=NULL;
+            memcpy(h,"JOBDBWAL",8); put_u32(h+8,1); put_u32(h+12,2); put_u64(h+16,52); put_u64(h+24,1); put_u32(h+32,8); put_u64(h+36,1); put_u32(h+44,0);
+            if (k==0) h[0]='X';
+            if (k==1) put_u32(h+8,99);
+            if (k==2) put_u32(h+12,99);
+            if (k==3) put_u64(h+16,1);
+            if (k==4) put_u32(h+44,UINT32_MAX);
+            snprintf(wal,sizeof wal,"%s/wal.0",p); f=fopen(wal,"ab"); assert(f); assert(fwrite(h,1,sizeof h,f)==sizeof h); fclose(f);
+            assert(jobdb_open(p,&db)==JOBDB_ERR_CORRUPT);
+        }
+    }
+    {
+        path_for(path,sizeof path,"wal-context-corruption"); assert(jobdb_create(path,&db)==JOBDB_OK); jobdb_close(db); db=NULL;
+        snprintf(wal,sizeof wal,"%s/wal.0",path); { unsigned char h[52]={0}; memcpy(h,"JOBDBWAL",8); put_u32(h+8,1); put_u32(h+12,2); put_u64(h+16,52); put_u64(h+24,1); put_u32(h+32,8); put_u64(h+36,1); f=fopen(wal,"ab"); assert(f); assert(fwrite(h,1,sizeof h,f)==sizeof h); fclose(f); }
+        assert(jobdb_open(path,&db)==JOBDB_ERR_CORRUPT);
+    }
+    return 0;
 }
 
 static int lease_test(void) {
@@ -70,8 +94,49 @@ static int lease_test(void) {
 }
 
 static int failure_test(void) {
-    const jobdb_failure_point_t points[] = { JOBDB_FAILURE_BEFORE_WAL_BEGIN, JOBDB_FAILURE_AFTER_WAL_BEGIN, JOBDB_FAILURE_AFTER_WAL_OPERATIONS, JOBDB_FAILURE_AFTER_COMMIT_SYNC, JOBDB_FAILURE_DURING_APPLY, JOBDB_FAILURE_CHECKPOINT_BEFORE_MANIFEST, JOBDB_FAILURE_BEFORE_WAL_TRUNCATE, JOBDB_FAILURE_AFTER_WAL_TRUNCATE };
-    for (unsigned k=0;k<sizeof(points)/sizeof(points[0]);k++) { char path[256]; jobdb_t *db=NULL; unsigned char x=3; jobdb_record_t r; path_for(path,sizeof(path),"failure"); make_db(path,&db); if(k<5){jobdb_tx_t *tx=NULL;assert(jobdb_tx_begin(db,&tx)==JOBDB_OK);assert(jobdb_tx_put(tx,8,1,&x,1)==JOBDB_OK);jobdb_test_fail_next(db,points[k]);assert(jobdb_tx_commit(tx)==JOBDB_ERR_IO);jobdb_tx_rollback(tx);jobdb_close(db);db=NULL;assert(jobdb_open(path,&db)==JOBDB_OK);if(k>=3)assert(jobdb_record_get(db,8,1,&r)==JOBDB_OK);else assert(jobdb_record_get(db,8,1,&r)==JOBDB_ERR_NOT_FOUND);if(k>=3)jobdb_record_free(&r);}else{jobdb_test_fail_next(db,points[k]);assert(jobdb_checkpoint(db)==JOBDB_ERR_IO);jobdb_close(db);db=NULL;assert(jobdb_open(path,&db)==JOBDB_OK);}jobdb_close(db); }
+    const jobdb_failure_point_t commit_points[] = {
+        JOBDB_FAILURE_BEFORE_WAL_BEGIN, JOBDB_FAILURE_AFTER_WAL_BEGIN,
+        JOBDB_FAILURE_AFTER_WAL_OPERATIONS, JOBDB_FAILURE_AFTER_WAL_PRECOMMIT_SYNC,
+        JOBDB_FAILURE_AFTER_COMMIT_WRITE, JOBDB_FAILURE_AFTER_COMMIT_SYNC,
+        JOBDB_FAILURE_DURING_APPLY, JOBDB_FAILURE_AFTER_APPLY,
+        JOBDB_FAILURE_AFTER_APPLY_SYNC, JOBDB_FAILURE_BEFORE_MANIFEST_WRITE,
+        JOBDB_FAILURE_AFTER_MANIFEST_WRITE, JOBDB_FAILURE_AFTER_MANIFEST_SYNC
+    };
+    for (unsigned k=0;k<sizeof(commit_points)/sizeof(commit_points[0]);k++) {
+        char path[256]; jobdb_t *db=NULL; unsigned char x=3; jobdb_record_t r;
+        path_for(path,sizeof(path),"failure"); make_db(path,&db);
+        jobdb_tx_t *tx=NULL; assert(jobdb_tx_begin(db,&tx)==JOBDB_OK);
+        assert(jobdb_tx_put(tx,8,1,&x,1)==JOBDB_OK);
+        jobdb_test_fail_next(db,commit_points[k]);
+        assert(jobdb_tx_commit(tx)==JOBDB_ERR_IO); jobdb_tx_rollback(tx);
+        jobdb_close(db); db=NULL; assert(jobdb_open(path,&db)==JOBDB_OK);
+        if (k >= 5) {
+            assert(jobdb_record_get(db,8,1,&r)==JOBDB_OK); jobdb_record_free(&r);
+        } else {
+            jobdb_result_t got=jobdb_record_get(db,8,1,&r);
+            assert(got==JOBDB_ERR_NOT_FOUND || got==JOBDB_OK);
+            if (got==JOBDB_OK) jobdb_record_free(&r);
+        }
+        assert(jobdb_verify(path)==JOBDB_OK); jobdb_close(db);
+    }
+    {
+        const jobdb_failure_point_t checkpoint_points[] = {
+            JOBDB_FAILURE_CHECKPOINT_BEFORE_MANIFEST,
+            JOBDB_FAILURE_CHECKPOINT_AFTER_MANIFEST,
+            JOBDB_FAILURE_BEFORE_WAL_TRUNCATE,
+            JOBDB_FAILURE_AFTER_WAL_TRUNCATE
+        };
+        for (unsigned k=0;k<sizeof(checkpoint_points)/sizeof(checkpoint_points[0]);k++) {
+            char path[256]; jobdb_t *db=NULL; unsigned char x=9; jobdb_record_t r;
+            path_for(path,sizeof(path),"checkpoint-failure"); make_db(path,&db);
+            assert(jobdb_record_create(db,8,1,&x,1)==JOBDB_OK);
+            jobdb_test_fail_next(db,checkpoint_points[k]);
+            assert(jobdb_checkpoint(db)==JOBDB_ERR_IO);
+            jobdb_close(db); db=NULL; assert(jobdb_open(path,&db)==JOBDB_OK);
+            assert(jobdb_record_get(db,8,1,&r)==JOBDB_OK); jobdb_record_free(&r);
+            assert(jobdb_verify(path)==JOBDB_OK); jobdb_close(db);
+        }
+    }
     return 0;
 }
 

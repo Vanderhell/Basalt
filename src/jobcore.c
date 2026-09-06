@@ -142,18 +142,26 @@ static uint64_t allocate_execution_id(jobcore_t *c) {
     uint64_t id=0;
     return jobdb_allocate_execution_id(c->db,&id)==JOBDB_OK?id:0;
 }
+static int load_all_record_ids(jobcore_t *c, uint32_t type, uint64_t **out, size_t *count) {
+    size_t n = 0; uint64_t *ids;
+    if (jobdb_list_record_ids(c->db, type, NULL, 0, &n) != JOBDB_OK) return 0;
+    ids = n ? (uint64_t *)malloc(n * sizeof *ids) : NULL;
+    if (n && !ids) return 0;
+    if (jobdb_list_record_ids(c->db, type, ids, n, &n) != JOBDB_OK) { free(ids); return 0; }
+    *out = ids; *count = n; return 1;
+}
 
 static int64_t latest_finished_for_schedule(jobcore_t *c, uint64_t schedule_id) {
-    uint64_t ids[4096]; size_t count = 0, i; int64_t finished = 0; jobdb_execution_t execution;
-    if (jobdb_list_record_ids(c->db, 3, ids, 4096, &count) != JOBDB_OK) return 0;
+    uint64_t *ids = NULL; size_t count = 0, i; int64_t finished = 0; jobdb_execution_t execution;
+    if (!load_all_record_ids(c, 3, &ids, &count)) return 0;
     for (i = 0; i < count; ++i) if (jobdb_execution_get(c->db, ids[i], &execution) == JOBDB_OK && execution.schedule_id == schedule_id && execution.finished_at > finished && (execution.state == JOBDB_EXEC_DONE || execution.state == JOBDB_EXEC_FAILED || execution.state == JOBDB_EXEC_DEAD || execution.state == JOBDB_EXEC_CANCELLED)) finished = execution.finished_at;
-    return finished;
+    free(ids); return finished;
 }
 static int schedule_active(jobcore_t *c, uint64_t schedule_id) {
-    uint64_t ids[4096]; size_t count = 0, i; jobdb_execution_t e;
-    if (jobdb_list_record_ids(c->db, 3, ids, 4096, &count) != JOBDB_OK) return 0;
-    for (i = 0; i < count; ++i) if (jobdb_execution_get(c->db, ids[i], &e) == JOBDB_OK && e.schedule_id == schedule_id && (e.state == JOBDB_EXEC_READY || e.state == JOBDB_EXEC_LEASED || e.state == JOBDB_EXEC_RUNNING)) return 1;
-    return 0;
+    uint64_t *ids = NULL; size_t count = 0, i; jobdb_execution_t e;
+    if (!load_all_record_ids(c, 3, &ids, &count)) return 0;
+    for (i = 0; i < count; ++i) if (jobdb_execution_get(c->db, ids[i], &e) == JOBDB_OK && e.schedule_id == schedule_id && (e.state == JOBDB_EXEC_READY || e.state == JOBDB_EXEC_LEASED || e.state == JOBDB_EXEC_RUNNING)) { free(ids); return 1; }
+    free(ids); return 0;
 }
 static void discard_scheduled_fire(jobcore_t *c, jobdb_schedule_t *schedule, int64_t fire_at, int64_t next_fire) {
     uint64_t id = allocate_execution_id(c), revision;
@@ -163,8 +171,8 @@ static void discard_scheduled_fire(jobcore_t *c, jobdb_schedule_t *schedule, int
 }
 
 static void scheduler_iteration(jobcore_t *c) {
-    uint64_t ids[4096]; size_t count = 0, i; int64_t now = current_time(); jobdb_schedule_t schedule;
-    if (jobdb_list_record_ids(c->db, 2, ids, 4096, &count) != JOBDB_OK) return;
+    uint64_t *ids = NULL; size_t count = 0, i; int64_t now = current_time(); jobdb_schedule_t schedule;
+    if (!load_all_record_ids(c, 2, &ids, &count)) return;
     for (i = 0; i < count && !c->stopping; ++i) {
         int64_t fire_at, next_fire; uint64_t execution_id;
         if (jobdb_schedule_get(c->db, ids[i], &schedule) != JOBDB_OK || !schedule.enabled) continue;
@@ -210,6 +218,7 @@ static void scheduler_iteration(jobcore_t *c) {
             }
         }
     }
+    free(ids);
 }
 
 #ifdef _WIN32
@@ -298,14 +307,15 @@ jobdb_result_t jobcore_schedule_create(jobcore_t *c, const jobcore_schedule_spec
 
 static int workflow_state(jobcore_t *c, uint64_t id, jobdb_execution_state_t *state) { jobdb_execution_t e; if (jobdb_execution_get(c->db, id, &e) != JOBDB_OK) return 0; *state = e.state; return 1; }
 static void workflow_progress(jobcore_t *c, uint64_t completed_id) {
-    uint64_t ids[4096]; size_t count = 0, i, j; workflow_record_t current = {0}, node; jobdb_record_t r = {0};
-    if (jobdb_list_record_ids(c->db, WORKFLOW_NODE_RECORD_TYPE, ids, 4096, &count) != JOBDB_OK) return;
+    uint64_t *ids = NULL; size_t count = 0, i, j; workflow_record_t current = {0}, node; jobdb_record_t r = {0};
+    if (!load_all_record_ids(c, WORKFLOW_NODE_RECORD_TYPE, &ids, &count)) return;
     for (i = 0; i < count; ++i) if (jobdb_record_get(c->db, WORKFLOW_NODE_RECORD_TYPE, ids[i], &r) == JOBDB_OK) { if (r.payload_size == sizeof current) { memcpy(&node, r.payload, sizeof node); if (node.execution_id == completed_id) current = node; } jobdb_record_free(&r); }
-    if (!current.workflow_id) return;
+    if (!current.workflow_id) { free(ids); return; }
     for (i = 0; i < count; ++i) if (jobdb_record_get(c->db, WORKFLOW_NODE_RECORD_TYPE, ids[i], &r) == JOBDB_OK) {
         if (r.payload_size == sizeof node) { int ready = 1, failed = 0; memcpy(&node, r.payload, sizeof node); for (j = 0; j < node.dependency_count; ++j) { jobdb_execution_state_t state; if (!workflow_state(c, node.dependencies[j], &state) || (state != JOBDB_EXEC_DONE && state != JOBDB_EXEC_FAILED && state != JOBDB_EXEC_DEAD && state != JOBDB_EXEC_CANCELLED)) ready = 0; if (state == JOBDB_EXEC_FAILED || state == JOBDB_EXEC_DEAD || state == JOBDB_EXEC_CANCELLED) failed = 1; } if (node.workflow_id == current.workflow_id && node.dependency_count && ready && node.policy != JOBCORE_DEP_BLOCK) { uint64_t revision; if (failed && node.policy == JOBCORE_DEP_CANCEL) (void)jobdb_execution_transition(c->db, node.execution_id, 1, JOBDB_EXEC_CANCELLED, &revision); else if (!failed || node.policy == JOBCORE_DEP_CONTINUE) (void)jobdb_execution_transition(c->db, node.execution_id, 1, JOBDB_EXEC_READY, &revision); } }
         jobdb_record_free(&r);
     }
+    free(ids);
 }
 
 jobdb_result_t jobcore_workflow_submit(jobcore_t *c, uint64_t workflow_id, const jobcore_workflow_node_t *nodes, size_t count, jobcore_dependency_policy_t policy, int64_t now) {
