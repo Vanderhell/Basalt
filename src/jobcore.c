@@ -110,6 +110,8 @@ static void heartbeat_stop(heartbeat_t *heartbeat) {
     heartbeat->started = 0;
 }
 
+static jobdb_result_t complete_with_retry(jobdb_t *db,uint64_t id,const jobdb_worker_id_t*w,uint64_t token){jobdb_result_t r=JOBDB_ERR_BUSY;for(unsigned i=0;i<100&&(r==JOBDB_ERR_BUSY||r==JOBDB_ERR_CONFLICT);i++){r=jobdb_execution_complete(db,id,w,token);if(r==JOBDB_ERR_BUSY||r==JOBDB_ERR_CONFLICT)sleep_ms(2);}return r;}
+#define jobdb_execution_complete(db,id,w,token) complete_with_retry((db),(id),(w),(token))
 static void process_one(jobcore_t *c, const jobdb_worker_id_t *worker) {
     jobdb_execution_t execution; jobdb_record_t record = {0}; core_handler_t handler = {0};
     jobcore_execution_context_t context; heartbeat_t heartbeat; int64_t started_at = current_time();

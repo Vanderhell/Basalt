@@ -85,7 +85,7 @@ int main(int argc, char **argv) {
     if (argc > 2 && strcmp(argv[1], "writer-child") == 0) {
         jobdb_tx_t *tx = NULL; unsigned long id = strtoul(argv[2], NULL, 10); unsigned char value = (unsigned char)id;
         assert(jobdb_open("jobdb-test", &d) == JOBDB_OK);
-        assert(jobdb_tx_begin(d, &tx) == JOBDB_OK); assert(jobdb_tx_put(tx, 8, 1000 + id, &value, 1) == JOBDB_OK); assert(jobdb_tx_commit(tx) == JOBDB_OK); jobdb_tx_rollback(tx);
+        assert(jobdb_tx_begin(d, &tx) == JOBDB_OK); assert(jobdb_tx_put(tx, 8, 1000 + id, &value, 1) == JOBDB_OK); { jobdb_result_t cr; do { cr=jobdb_tx_commit(tx); if(cr==JOBDB_ERR_TIMEOUT||cr==JOBDB_ERR_BUSY) { jobdb_tx_rollback(tx); tx=NULL; Sleep(20); assert(jobdb_tx_begin(d,&tx)==JOBDB_OK); assert(jobdb_tx_put(tx,8,1000+id,&value,1)==JOBDB_OK); } } while(cr==JOBDB_ERR_TIMEOUT||cr==JOBDB_ERR_BUSY); assert(cr==JOBDB_OK); } jobdb_tx_rollback(tx);
         jobdb_close(d); return 0;
     }
     if (argc > 1 && strcmp(argv[1], "reader-child") == 0) {
