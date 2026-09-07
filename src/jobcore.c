@@ -230,7 +230,10 @@ static void scheduler_iteration(jobcore_t *c) {
                 continue;
             }
             if (missed > 0 && (schedule.misfire_policy == JOBCORE_MISFIRE_RUN_ONCE || schedule.misfire_policy == JOBCORE_MISFIRE_RUN_LAST)) fire_at = now;
-            if (schedule.misfire_policy == JOBCORE_MISFIRE_CATCH_UP_ALL && schedule.occurrence_count >= (schedule.max_occurrences ? schedule.max_occurrences : 100u)) continue;
+            if (missed > 0 && schedule.misfire_policy == JOBCORE_MISFIRE_CATCH_UP_ALL) {
+                int64_t limit = schedule.catch_up_max ? (int64_t)schedule.catch_up_max : 100;
+                if (missed > limit && limit > 0 && cadence > 0 && limit <= INT64_MAX / cadence && now >= limit * cadence) fire_at = now - limit * cadence;
+            }
         }
         execution_id = allocate_execution_id(c); if (!execution_id) continue;
         next_fire = INT64_MAX;
