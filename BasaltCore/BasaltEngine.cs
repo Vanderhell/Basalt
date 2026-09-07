@@ -110,13 +110,27 @@ public sealed class BasaltEngine : IDisposable
         ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_ledger_get(_database.Handle, executionId, out var e));
         return new BasaltLedgerEntry { ExecutionId=e.ExecutionId, JobDefinitionId=e.JobDefinitionId, ScheduleId=e.ScheduleId, WorkflowId=e.WorkflowId, StartedAt=e.StartedAt, FinishedAt=e.FinishedAt, Duration=e.Duration, Attempt=e.Attempt, FinalState=e.FinalState, ResultCode=e.ResultCode, ErrorCode=e.ErrorCode };
     }
+    public IReadOnlyList<ulong> ListLedgerExecutionIds()
+    {
+        ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_ledger_list(_database.Handle, null, UIntPtr.Zero, out var needed));
+        if (needed.ToUInt64() > int.MaxValue) throw new BasaltException(JobDbResult.Limit);
+        var ids = new ulong[(int)needed.ToUInt64()]; BasaltDatabase.Check(NativeMethods.basalt_ledger_list(_database.Handle, ids, (UIntPtr)ids.Length, out var count));
+        if ((ulong)ids.Length != count.ToUInt64()) Array.Resize(ref ids, (int)count.ToUInt64()); return ids;
+    }
     public void VerifyHealth() { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_db_health(_database.Handle)); }
 
     public void CreateSchedule(ulong scheduleId, ulong jobType, uint scheduleType, DateTimeOffset firstFireAt, TimeSpan interval, uint intervalMode, ulong maxOccurrences, ReadOnlyMemory<byte> payload, uint payloadVersion = 1, string? cronExpression = null, string? timezone = null, uint misfirePolicy = 2, uint overlapPolicy = 1, uint catchUpMax = 0)
     { ThrowIfDisposed(); var bytes=payload.ToArray(); BasaltDatabase.Check(NativeMethods.basalt_schedule_create(_core,scheduleId,jobType,scheduleType,firstFireAt.ToUnixTimeSeconds(),checked((long)interval.TotalSeconds),intervalMode,maxOccurrences,bytes,(uint)bytes.Length,payloadVersion,cronExpression,timezone,misfirePolicy,overlapPolicy,catchUpMax)); }
     public BasaltScheduleInfo GetSchedule(ulong scheduleId) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_schedule_get(_core,scheduleId,out var s)); return new BasaltScheduleInfo{ScheduleId=s.ScheduleId,JobDefinitionId=s.JobDefinitionId,ScheduleType=s.ScheduleType,Enabled=s.Enabled!=0,TimezoneReference=s.TimezoneReference,StartAt=s.StartAt,EndAt=s.EndAt,LastFireAt=s.LastFireAt,NextFireAt=s.NextFireAt,OccurrenceCount=s.OccurrenceCount,MaxOccurrences=s.MaxOccurrences,Revision=s.Revision,MisfirePolicy=s.MisfirePolicy,OverlapPolicy=s.OverlapPolicy}; }
     public void UpdateSchedule(BasaltScheduleInfo value, ulong expectedRevision) { if (value == null) throw new ArgumentNullException(nameof(value)); ThrowIfDisposed(); var s=new NativeMethods.ScheduleView{ScheduleId=value.ScheduleId,JobDefinitionId=value.JobDefinitionId,ScheduleType=value.ScheduleType,Enabled=value.Enabled?1u:0u,TimezoneReference=value.TimezoneReference,StartAt=value.StartAt,EndAt=value.EndAt,LastFireAt=value.LastFireAt,NextFireAt=value.NextFireAt,OccurrenceCount=value.OccurrenceCount,MaxOccurrences=value.MaxOccurrences,Revision=value.Revision,MisfirePolicy=value.MisfirePolicy,OverlapPolicy=value.OverlapPolicy}; BasaltDatabase.Check(NativeMethods.basalt_schedule_update(_core,ref s,expectedRevision)); }
-    public void PauseSchedule(ulong scheduleId, ulong expectedRevision) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_schedule_pause(_core,scheduleId,expectedRevision)); }
+     public IReadOnlyList<ulong> ListScheduleIds()
+     {
+         ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_schedule_list(_core, null, UIntPtr.Zero, out var needed));
+         if (needed.ToUInt64() > int.MaxValue) throw new BasaltException(JobDbResult.Limit);
+         var ids = new ulong[(int)needed.ToUInt64()]; BasaltDatabase.Check(NativeMethods.basalt_schedule_list(_core, ids, (UIntPtr)ids.Length, out var count));
+         if ((ulong)ids.Length != count.ToUInt64()) Array.Resize(ref ids, (int)count.ToUInt64()); return ids;
+     }
+     public void PauseSchedule(ulong scheduleId, ulong expectedRevision) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_schedule_pause(_core,scheduleId,expectedRevision)); }
     public void ResumeSchedule(ulong scheduleId, ulong expectedRevision) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_schedule_resume(_core,scheduleId,expectedRevision)); }
     public void RemoveSchedule(ulong scheduleId, ulong expectedRevision) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_schedule_remove(_core,scheduleId,expectedRevision)); }
     public void SubmitWorkflow(ulong workflowId, IReadOnlyList<BasaltWorkflowNode> nodes, BasaltDependencyPolicy policy = BasaltDependencyPolicy.Block)

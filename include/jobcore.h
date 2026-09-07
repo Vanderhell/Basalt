@@ -56,6 +56,7 @@ typedef struct jobcore_schedule_spec {
 } jobcore_schedule_spec_t;
 
 jobdb_result_t jobcore_create(jobdb_t *, uint32_t, int64_t, jobcore_t **);
+jobdb_t *jobcore_database(jobcore_t *);
 jobdb_result_t jobcore_create_ex(jobdb_t *, uint32_t, int64_t, uint32_t, jobcore_t **);
 void jobcore_destroy(jobcore_t *);
 jobdb_result_t jobcore_start(jobcore_t *);

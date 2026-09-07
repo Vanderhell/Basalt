@@ -139,6 +139,8 @@ public static class NativeMethods
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     public static extern JobDbResult basalt_ledger_get(nint db, ulong executionId, out LedgerView entry);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    public static extern JobDbResult basalt_ledger_list(nint db, ulong[]? ids, UIntPtr capacity, out UIntPtr count);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     public static extern JobDbResult basalt_stats_get(nint db, out StatsView stats);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     public static extern JobDbResult basalt_db_health(nint db);
@@ -146,6 +148,8 @@ public static class NativeMethods
     public static extern JobDbResult basalt_schedule_create(nint core, ulong scheduleId, ulong jobType, uint scheduleType, long firstFireAt, long interval, uint intervalMode, ulong maxOccurrences, byte[]? payload, uint payloadSize, uint payloadVersion, string? cronExpression, string? timezone, uint misfirePolicy, uint overlapPolicy, uint catchUpMax);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     public static extern JobDbResult basalt_schedule_get(nint core, ulong scheduleId, out ScheduleView schedule);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    public static extern JobDbResult basalt_schedule_list(nint core, ulong[]? ids, UIntPtr capacity, out UIntPtr count);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     public static extern JobDbResult basalt_schedule_update(nint core, ref ScheduleView schedule, ulong expectedRevision);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
