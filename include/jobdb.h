@@ -158,8 +158,20 @@ jobdb_result_t jobdb_execution_retry(jobdb_t *db, uint64_t execution_id,
                                      uint64_t *out_revision);
 jobdb_result_t jobdb_reclaim_expired(jobdb_t *db, int64_t now, uint32_t *out_count);
 jobdb_result_t jobdb_schedule_create(jobdb_t *db, const jobdb_schedule_t *schedule);
+jobdb_result_t jobdb_schedule_create_extra(jobdb_t *db, const jobdb_schedule_t *schedule,
+                                            uint32_t first_record_type, const void *first_payload,
+                                            uint32_t first_payload_size, uint32_t second_record_type,
+                                            const void *second_payload, uint32_t second_payload_size);
 jobdb_result_t jobdb_schedule_get(jobdb_t *db, uint64_t schedule_id,
                                   jobdb_schedule_t *out_schedule);
+jobdb_result_t jobdb_schedule_update(jobdb_t *db, const jobdb_schedule_t *schedule,
+                                      uint64_t expected_revision);
+jobdb_result_t jobdb_schedule_pause(jobdb_t *db, uint64_t schedule_id,
+                                     uint64_t expected_revision);
+jobdb_result_t jobdb_schedule_resume(jobdb_t *db, uint64_t schedule_id,
+                                      uint64_t expected_revision);
+jobdb_result_t jobdb_schedule_remove(jobdb_t *db, uint64_t schedule_id,
+                                     uint64_t expected_revision);
 jobdb_result_t jobdb_schedule_try_fire(jobdb_t *db, uint64_t schedule_id,
                                        uint64_t expected_revision,
                                        int64_t expected_next_fire_at,
@@ -180,6 +192,15 @@ jobdb_result_t jobdb_list_record_ids(jobdb_t *db, uint32_t record_type,
 jobdb_result_t jobdb_tx_begin(jobdb_t *db, jobdb_tx_t **out_tx);
 jobdb_result_t jobdb_tx_put(jobdb_tx_t *tx, uint32_t target_type, uint64_t target_id,
                             const void *payload, uint32_t payload_size);
+jobdb_result_t jobdb_tx_put_create(jobdb_tx_t *tx, uint32_t target_type, uint64_t target_id,
+                                   const void *payload, uint32_t payload_size);
+jobdb_result_t jobdb_tx_put_revision(jobdb_tx_t *tx, uint32_t target_type, uint64_t target_id,
+                                     uint64_t expected_revision, const void *payload,
+                                     uint32_t payload_size);
+jobdb_result_t jobdb_tx_put_execution_create(jobdb_tx_t *tx,
+                                             const jobdb_execution_t *execution);
+jobdb_result_t jobdb_tx_put_stats(jobdb_tx_t *tx, const jobdb_stats_t *stats,
+                                  uint64_t expected_revision, int exists);
 jobdb_result_t jobdb_tx_delete(jobdb_tx_t *tx, uint32_t target_type, uint64_t target_id);
 jobdb_result_t jobdb_tx_commit(jobdb_tx_t *tx);
 void jobdb_tx_rollback(jobdb_tx_t *tx);

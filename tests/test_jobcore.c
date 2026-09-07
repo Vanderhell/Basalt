@@ -53,6 +53,9 @@ int main(void) {
     jobcore_schedule_spec_t delayed, fixed_rate, fixed_delay;
     int64_t now = (int64_t)time(NULL);
     int64_t next_fire;
+    jobcore_workflow_node_t workflow_nodes[2], cycle_nodes[2];
+    jobdb_stats_t stats_before, stats_after;
+    uint64_t reserved_a = 0, reserved_b = 0;
     assert(jobcore_cron_next_fire("*/15 * * * *", "UTC", now, &next_fire) == JOBDB_OK);
     assert(next_fire > now && next_fire % 900 == 0);
     assert(jobcore_cron_next_fire("0 2 * * *", "Europe/Bratislava", now, &next_fire) == JOBDB_OK);
@@ -74,6 +77,16 @@ int main(void) {
     assert(jobcore_schedule_create(core, &fixed_rate) == JOBDB_OK);
     memset(&fixed_delay, 0, sizeof fixed_delay); fixed_delay.schedule_id = 52; fixed_delay.job_type = 42; fixed_delay.type = JOBCORE_SCHEDULE_INTERVAL; fixed_delay.first_fire_at = now + 1; fixed_delay.interval = 1; fixed_delay.interval_mode = JOBCORE_FIXED_DELAY; fixed_delay.max_occurrences = 1; fixed_delay.payload = "job"; fixed_delay.payload_size = 3; fixed_delay.payload_version = 7;
     assert(jobcore_schedule_create(core, &fixed_delay) == JOBDB_OK);
+    memset(workflow_nodes, 0, sizeof workflow_nodes);
+    workflow_nodes[0].node_id = 7001; workflow_nodes[0].job_type = 42; workflow_nodes[0].payload = "job"; workflow_nodes[0].payload_size = 3; workflow_nodes[0].payload_version = 7;
+    workflow_nodes[1].node_id = 7002; workflow_nodes[1].job_type = 42; workflow_nodes[1].payload = "job"; workflow_nodes[1].payload_size = 3; workflow_nodes[1].payload_version = 7; workflow_nodes[1].dependency_count = 1; workflow_nodes[1].dependencies[0] = 7001;
+    assert(jobdb_allocate_execution_id(db, &reserved_a) == JOBDB_OK && jobdb_allocate_execution_id(db, &reserved_b) == JOBDB_OK);
+    assert(jobcore_workflow_submit(core, 7000, workflow_nodes, 2, JOBCORE_DEP_BLOCK, now) == JOBDB_OK);
+    { jobdb_execution_t workflow_first, workflow_second; assert(jobdb_execution_get(db, reserved_b + 1, &workflow_first) == JOBDB_OK && workflow_first.state == JOBDB_EXEC_READY); assert(jobdb_execution_get(db, reserved_b + 2, &workflow_second) == JOBDB_OK && workflow_second.state == JOBDB_EXEC_BLOCKED); }
+    assert(jobdb_get_stats(db, &stats_before) == JOBDB_OK);
+    memcpy(cycle_nodes, workflow_nodes, sizeof cycle_nodes); cycle_nodes[0].node_id = 7101; cycle_nodes[0].dependency_count = 1; cycle_nodes[0].dependencies[0] = 7102; cycle_nodes[1].node_id = 7102; cycle_nodes[1].dependency_count = 1; cycle_nodes[1].dependencies[0] = 7101;
+    assert(jobcore_workflow_submit(core, 7100, cycle_nodes, 2, JOBCORE_DEP_BLOCK, now) == JOBDB_ERR_INVALID_ARGUMENT);
+    assert(jobdb_get_stats(db, &stats_after) == JOBDB_OK && stats_after.submitted_total == stats_before.submitted_total);
     assert(jobcore_start(core) == JOBDB_OK);
     wait_state(db, id, JOBDB_EXEC_DONE);
     wait_state(db, missing, JOBDB_EXEC_FAILED);

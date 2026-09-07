@@ -294,6 +294,9 @@ int main(int argc, char **argv) {
         assert(jobdb_get_stats(d,&stats)==JOBDB_OK && stats.retried_total==1);
     }
     jobdb_close(d);
+    fresh(); assert(jobdb_open("jobdb-test", &d) == JOBDB_OK);
+    { jobdb_schedule_t s={0}, got; const char payload[]="p"; s.schedule_id=820; s.job_definition_id=55; s.enabled=1; s.next_fire_at=10; assert(jobdb_schedule_create(d,&s)==JOBDB_OK); assert(jobdb_record_create(d,100,820,payload,1)==JOBDB_OK); assert(jobdb_record_create(d,101,820,payload,1)==JOBDB_OK); assert(jobdb_schedule_pause(d,820,1)==JOBDB_OK); assert(jobdb_schedule_get(d,820,&got)==JOBDB_OK && got.enabled==0 && got.revision==2); assert(jobdb_schedule_pause(d,820,1)==JOBDB_ERR_CONFLICT); assert(jobdb_schedule_resume(d,820,2)==JOBDB_OK); assert(jobdb_schedule_get(d,820,&got)==JOBDB_OK && got.enabled==1 && got.revision==3); got.next_fire_at=55; assert(jobdb_schedule_update(d,&got,3)==JOBDB_OK); assert(jobdb_schedule_remove(d,820,3)==JOBDB_ERR_CONFLICT); assert(jobdb_schedule_remove(d,820,4)==JOBDB_OK); assert(jobdb_schedule_get(d,820,&got)==JOBDB_ERR_NOT_FOUND); { jobdb_record_t orphan={0}; assert(jobdb_record_get(d,100,820,&orphan)==JOBDB_ERR_NOT_FOUND); assert(jobdb_record_get(d,101,820,&orphan)==JOBDB_ERR_NOT_FOUND); } }
+    jobdb_close(d);
     rmdb();
     puts("jobdb tests passed");
     return 0;

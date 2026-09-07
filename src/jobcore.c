@@ -175,7 +175,7 @@ static void discard_scheduled_fire(jobcore_t *c, jobdb_schedule_t *schedule, int
     uint64_t id = allocate_execution_id(c), revision;
     if (id && jobdb_schedule_try_fire(c->db, schedule->schedule_id, schedule->revision, schedule->next_fire_at, id, fire_at, next_fire) == JOBDB_OK) {
         jobdb_execution_t e; if (jobdb_execution_get(c->db, id, &e) == JOBDB_OK) (void)jobdb_execution_transition(c->db, id, e.revision, JOBDB_EXEC_CANCELLED, &revision);
-    }
+  }
 }
 
 static void scheduler_iteration(jobcore_t *c) {
@@ -220,12 +220,12 @@ static void scheduler_iteration(jobcore_t *c) {
             if (schedule.max_occurrences && schedule.occurrence_count + 1 >= schedule.max_occurrences) next_fire = INT64_MAX;
             if (schedule.end_at && next_fire > schedule.end_at) next_fire = INT64_MAX;
         }
-        {
-            if (jobdb_schedule_try_fire(c->db, schedule.schedule_id, schedule.revision, schedule.next_fire_at, execution_id, fire_at, next_fire) == JOBDB_OK) {
-            if (schedule.schedule_type != JOBCORE_SCHEDULE_INTERVAL) { /* next_fire == INT64_MAX makes one-shot schedules inert */ }
-            }
-        }
-    }
+         {
+             if (jobdb_schedule_try_fire(c->db, schedule.schedule_id, schedule.revision, schedule.next_fire_at, execution_id, fire_at, next_fire) == JOBDB_OK) {
+             if (schedule.schedule_type != JOBCORE_SCHEDULE_INTERVAL) { /* next_fire == INT64_MAX makes one-shot schedules inert */ }
+             }
+         }
+     }
     free(ids);
 }
 
@@ -301,19 +301,29 @@ jobdb_result_t jobcore_enqueue(jobcore_t *c, uint64_t type, const void *payload,
 jobdb_result_t jobcore_enqueue_name(jobcore_t *c, const char *name, const void *payload, uint32_t size, uint32_t version, int64_t now, uint32_t max_attempts, uint64_t *out) { if (!name || !*name) return JOBDB_ERR_INVALID_ARGUMENT; return jobcore_enqueue(c, hash_name(name), payload, size, version, now, max_attempts, out); }
 jobdb_result_t jobcore_enqueue_with_retry(jobcore_t *c, uint64_t type, const void *payload, uint32_t size, uint32_t version, int64_t now, const jobcore_retry_spec_t *spec, uint64_t *out) { retry_record_t record; jobdb_execution_t e; uint8_t *buffer; uint64_t id; jobdb_result_t result; if (!c || !type || (size && !payload) || !spec || !out || spec->policy < JOBCORE_RETRY_NONE || spec->policy > JOBCORE_RETRY_EXPONENTIAL_WITH_JITTER || spec->max_attempts == 0 || spec->initial_delay < 0 || spec->max_delay < 0 || spec->jitter > 86400u) return JOBDB_ERR_INVALID_ARGUMENT; if (spec->policy == JOBCORE_RETRY_NONE) return jobcore_enqueue(c, type, payload, size, version, now, spec->max_attempts, out); if (size > UINT32_MAX - PAYLOAD_HEADER_SIZE) return JOBDB_ERR_LIMIT; id=allocate_execution_id(c); if (!id) return JOBDB_ERR_LIMIT; buffer=(uint8_t *)malloc(PAYLOAD_HEADER_SIZE + (size_t)size); if (!buffer) return JOBDB_ERR_INTERNAL; memcpy(buffer, &type, 8); memcpy(buffer + 8, &version, 4); memcpy(buffer + 12, &size, 4); if (size) memcpy(buffer + PAYLOAD_HEADER_SIZE, payload, size); memset(&e, 0, sizeof e); e.execution_id=id; e.job_definition_id=type; e.state=JOBDB_EXEC_READY; e.created_at=now; e.eligible_at=now; e.max_attempts=spec->max_attempts; memset(&record, 0, sizeof record); record.policy=(uint32_t)spec->policy; record.max_attempts=spec->max_attempts; record.initial_delay=spec->initial_delay; record.max_delay=spec->max_delay; record.backoff_factor=spec->backoff_factor; record.jitter=spec->jitter; result=jobdb_execution_enqueue_extra(c->db,&e,PAYLOAD_RECORD_TYPE,buffer,PAYLOAD_HEADER_SIZE+size,RETRY_RECORD_TYPE,&record,(uint32_t)sizeof record); free(buffer); *out=id; return result; }
 jobdb_result_t jobcore_schedule_create(jobcore_t *c, const jobcore_schedule_spec_t *spec) {
-    jobdb_schedule_t schedule; jobdb_result_t result;
+    jobdb_schedule_t schedule; jobdb_result_t result; uint8_t *payload_record = NULL, *cron_record = NULL; size_t cron_size = 0;
     if (!c || !spec || !spec->schedule_id || !spec->job_type || (spec->payload_size && !spec->payload)) return JOBDB_ERR_INVALID_ARGUMENT;
     if (spec->type < JOBCORE_SCHEDULE_IMMEDIATE || spec->type > JOBCORE_SCHEDULE_CRON) return JOBDB_ERR_INVALID_ARGUMENT;
     if (spec->type == JOBCORE_SCHEDULE_CRON && (!spec->cron_expression || !spec->timezone)) return JOBDB_ERR_INVALID_ARGUMENT;
     if (spec->type == JOBCORE_SCHEDULE_INTERVAL && (spec->interval <= 0 || (spec->interval_mode != JOBCORE_FIXED_RATE && spec->interval_mode != JOBCORE_FIXED_DELAY))) return JOBDB_ERR_INVALID_ARGUMENT;
     if (spec->misfire_policy > JOBCORE_MISFIRE_CATCH_UP_ALL || spec->overlap_policy > JOBCORE_OVERLAP_QUEUE_ALL) return JOBDB_ERR_INVALID_ARGUMENT;
     memset(&schedule, 0, sizeof schedule); schedule.schedule_id = spec->schedule_id; schedule.job_definition_id = spec->job_type; schedule.schedule_type = (uint32_t)spec->type; schedule.enabled = 1; schedule.start_at = spec->first_fire_at; schedule.next_fire_at = spec->first_fire_at; schedule.max_occurrences = spec->max_occurrences; schedule.timezone_reference = (uint64_t)spec->interval; schedule.overlap_policy = spec->overlap_policy ? (uint32_t)spec->overlap_policy : (uint32_t)spec->interval_mode; schedule.misfire_policy = (uint32_t)spec->misfire_policy;
-    if (spec->type == JOBCORE_SCHEDULE_CRON) { int64_t next; if (jobcore_cron_next_fire(spec->cron_expression, spec->timezone, spec->first_fire_at - 60, &next) != JOBDB_OK) return JOBDB_ERR_INVALID_ARGUMENT; schedule.next_fire_at = next; result = store_cron(c, spec->schedule_id, spec->cron_expression, spec->timezone); if (result != JOBDB_OK) return result; }
-    result = store_payload(c, SCHEDULE_PAYLOAD_RECORD_TYPE, spec->schedule_id, spec->job_type, spec->payload_version, spec->payload, spec->payload_size); if (result != JOBDB_OK) return result;
-    return jobdb_schedule_create(c->db, &schedule);
+    if (spec->payload_size > UINT32_MAX - PAYLOAD_HEADER_SIZE) return JOBDB_ERR_LIMIT;
+    payload_record = (uint8_t *)malloc(PAYLOAD_HEADER_SIZE + (size_t)spec->payload_size); if (!payload_record) return JOBDB_ERR_INTERNAL;
+    memcpy(payload_record, &spec->job_type, 8); memcpy(payload_record + 8, &spec->payload_version, 4); memcpy(payload_record + 12, &spec->payload_size, 4); if (spec->payload_size) memcpy(payload_record + PAYLOAD_HEADER_SIZE, spec->payload, spec->payload_size);
+    if (spec->type == JOBCORE_SCHEDULE_CRON) { int64_t next; size_t a = strlen(spec->timezone), b = strlen(spec->cron_expression); if (jobcore_cron_next_fire(spec->cron_expression, spec->timezone, spec->first_fire_at - 60, &next) != JOBDB_OK || a > SIZE_MAX - b - 2u) { free(payload_record); return JOBDB_ERR_INVALID_ARGUMENT; } cron_size = a + b + 2u; cron_record = (uint8_t *)malloc(cron_size); if (!cron_record) { free(payload_record); return JOBDB_ERR_INTERNAL; } memcpy(cron_record, spec->timezone, a + 1u); memcpy(cron_record + a + 1u, spec->cron_expression, b + 1u); schedule.next_fire_at = next; }
+    result = jobdb_schedule_create_extra(c->db, &schedule, SCHEDULE_PAYLOAD_RECORD_TYPE, payload_record, PAYLOAD_HEADER_SIZE + spec->payload_size, spec->type == JOBCORE_SCHEDULE_CRON ? CRON_RECORD_TYPE : 0, cron_record, (uint32_t)cron_size);
+    free(cron_record); free(payload_record); return result;
 }
 
+jobdb_result_t jobcore_schedule_get(jobcore_t *c, uint64_t id, jobdb_schedule_t *out) { if (!c) return JOBDB_ERR_INVALID_ARGUMENT; return jobdb_schedule_get(c->db, id, out); }
+jobdb_result_t jobcore_schedule_update(jobcore_t *c, const jobdb_schedule_t *schedule, uint64_t expected_revision) { if (!c) return JOBDB_ERR_INVALID_ARGUMENT; return jobdb_schedule_update(c->db, schedule, expected_revision); }
+jobdb_result_t jobcore_schedule_pause(jobcore_t *c, uint64_t id, uint64_t expected_revision) { if (!c) return JOBDB_ERR_INVALID_ARGUMENT; return jobdb_schedule_pause(c->db, id, expected_revision); }
+jobdb_result_t jobcore_schedule_resume(jobcore_t *c, uint64_t id, uint64_t expected_revision) { if (!c) return JOBDB_ERR_INVALID_ARGUMENT; return jobdb_schedule_resume(c->db, id, expected_revision); }
+jobdb_result_t jobcore_schedule_remove(jobcore_t *c, uint64_t id, uint64_t expected_revision) { if (!c) return JOBDB_ERR_INVALID_ARGUMENT; return jobdb_schedule_remove(c->db, id, expected_revision); }
+
 static int workflow_state(jobcore_t *c, uint64_t id, jobdb_execution_state_t *state) { jobdb_execution_t e; if (jobdb_execution_get(c->db, id, &e) != JOBDB_OK) return 0; *state = e.state; return 1; }
+static uint64_t workflow_node_record_id(uint64_t workflow_id, uint64_t node_id) { uint64_t h = workflow_id ^ UINT64_C(1469598103934665603); h ^= node_id; h *= UINT64_C(1099511628211); return h ? h : 1; }
 static void workflow_progress(jobcore_t *c, uint64_t completed_id) {
     uint64_t *ids = NULL; size_t count = 0, i, j; workflow_record_t current = {0}, node; jobdb_record_t r = {0};
     if (!load_all_record_ids(c, WORKFLOW_NODE_RECORD_TYPE, &ids, &count)) return;
@@ -326,10 +336,37 @@ static void workflow_progress(jobcore_t *c, uint64_t completed_id) {
     free(ids);
 }
 
-jobdb_result_t jobcore_workflow_submit(jobcore_t *c, uint64_t workflow_id, const jobcore_workflow_node_t *nodes, size_t count, jobcore_dependency_policy_t policy, int64_t now) {
-    size_t i, j; uint64_t execution_ids[128]; jobdb_execution_t execution; workflow_record_t record; jobdb_result_t result;
-    if (!c || !workflow_id || !nodes || !count || count > 128 || policy < JOBCORE_DEP_BLOCK || policy > JOBCORE_DEP_FAIL_WORKFLOW) return JOBDB_ERR_INVALID_ARGUMENT;
-    for (i = 0; i < count; ++i) { if (!nodes[i].node_id || !nodes[i].job_type || nodes[i].dependency_count > 8 || (nodes[i].payload_size && !nodes[i].payload)) return JOBDB_ERR_INVALID_ARGUMENT; for (j = 0; j < nodes[i].dependency_count; ++j) { if (!nodes[i].dependencies[j]) return JOBDB_ERR_INVALID_ARGUMENT; } execution_ids[i] = allocate_execution_id(c); if (!execution_ids[i]) return JOBDB_ERR_LIMIT; }
-    for (i = 0; i < count; ++i) { memset(&execution, 0, sizeof execution); execution.execution_id = execution_ids[i]; execution.job_definition_id = nodes[i].job_type; execution.workflow_id = workflow_id; execution.state = nodes[i].dependency_count ? JOBDB_EXEC_CREATED : JOBDB_EXEC_READY; execution.created_at = now; execution.eligible_at = now; execution.max_attempts = 1; result = jobdb_execution_create(c->db, &execution); if (result != JOBDB_OK) return result; result = store_payload(c, PAYLOAD_RECORD_TYPE, execution.execution_id, nodes[i].job_type, nodes[i].payload_version, nodes[i].payload, nodes[i].payload_size); if (result != JOBDB_OK) return result; memset(&record, 0, sizeof record); record.workflow_id = workflow_id; record.execution_id = execution.execution_id; record.node_id = nodes[i].node_id; record.policy = policy; record.dependency_count = (uint32_t)nodes[i].dependency_count; for (j = 0; j < nodes[i].dependency_count; ++j) { size_t k; record.dependencies[j] = 0; for (k = 0; k < count; ++k) if (nodes[k].node_id == nodes[i].dependencies[j]) record.dependencies[j] = execution_ids[k]; if (!record.dependencies[j]) return JOBDB_ERR_NOT_FOUND; } result = jobdb_record_create(c->db, WORKFLOW_NODE_RECORD_TYPE, nodes[i].node_id, &record, (uint32_t)sizeof record); if (result != JOBDB_OK) return result; }
-    return JOBDB_OK;
+static int workflow_cycle_dfs(const jobcore_workflow_node_t *nodes, size_t count, size_t index, unsigned char *visiting, unsigned char *done) {
+    size_t i, j;
+    if (visiting[index]) return 1;
+    if (done[index]) return 0;
+    visiting[index] = 1;
+    for (j = 0; j < nodes[index].dependency_count; ++j) {
+        for (i = 0; i < count; ++i) if (nodes[i].node_id == nodes[index].dependencies[j]) {
+            if (workflow_cycle_dfs(nodes, count, i, visiting, done)) return 1;
+            break;
+        }
+    }
+    visiting[index] = 0;
+    done[index] = 1;
+    return 0;
 }
+
+static int workflow_has_cycle(const jobcore_workflow_node_t *nodes, size_t count) {
+    unsigned char visiting[128] = {0}, done[128] = {0};
+    size_t i;
+    for (i = 0; i < count; ++i) if (workflow_cycle_dfs(nodes, count, i, visiting, done)) return 1;
+    return 0;
+}
+
+jobdb_result_t jobcore_workflow_submit(jobcore_t *c, uint64_t workflow_id, const jobcore_workflow_node_t *nodes, size_t count, jobcore_dependency_policy_t policy, int64_t now) {
+    size_t i, j, k; uint64_t execution_ids[128], stats_revision=0; jobdb_stats_t stats; jobdb_record_t sr={0}; jobdb_tx_t *tx=NULL; int has_stats=0; jobdb_result_t result;
+    if (!c || !workflow_id || !nodes || !count || count > 128 || policy < JOBCORE_DEP_BLOCK || policy > JOBCORE_DEP_FAIL_WORKFLOW) return JOBDB_ERR_INVALID_ARGUMENT;
+    if (workflow_has_cycle(nodes, count)) return JOBDB_ERR_INVALID_ARGUMENT;
+    for (i=0; i<count; ++i) { if (!nodes[i].node_id || !nodes[i].job_type || nodes[i].dependency_count>8 || (nodes[i].payload_size && !nodes[i].payload) || nodes[i].payload_size>UINT32_MAX-PAYLOAD_HEADER_SIZE) return JOBDB_ERR_INVALID_ARGUMENT; for (j=0; j<i; ++j) if (nodes[j].node_id==nodes[i].node_id) return JOBDB_ERR_ALREADY_EXISTS; for (j=0; j<nodes[i].dependency_count; ++j) { if (nodes[i].dependencies[j]==nodes[i].node_id) return JOBDB_ERR_INVALID_ARGUMENT; for (k=0;k<count;++k) if (nodes[k].node_id==nodes[i].dependencies[j]) break; if (k==count) return JOBDB_ERR_NOT_FOUND; } execution_ids[i]=allocate_execution_id(c); if (!execution_ids[i]) return JOBDB_ERR_LIMIT; }
+    result=jobdb_get_stats(c->db,&stats); if (result!=JOBDB_OK) return result; if (count > UINT64_MAX - stats.submitted_total) return JOBDB_ERR_LIMIT; stats.submitted_total += count; result=jobdb_record_get(c->db,5,1,&sr); if (result==JOBDB_OK) { has_stats=1; stats_revision=sr.revision; jobdb_record_free(&sr); } else if (result!=JOBDB_ERR_NOT_FOUND) return result;
+    result=jobdb_tx_begin(c->db,&tx); if (result!=JOBDB_OK) return result;
+    for (i=0; i<count && result==JOBDB_OK; ++i) { jobdb_execution_t e={0}; uint8_t *p; e.execution_id=execution_ids[i]; e.job_definition_id=nodes[i].job_type; e.workflow_id=workflow_id; e.state=nodes[i].dependency_count?JOBDB_EXEC_BLOCKED:JOBDB_EXEC_READY; e.created_at=now; e.eligible_at=now; e.max_attempts=1; result=jobdb_tx_put_execution_create(tx,&e); if (result!=JOBDB_OK) break; p=(uint8_t*)malloc(PAYLOAD_HEADER_SIZE+(size_t)nodes[i].payload_size); if (!p) { result=JOBDB_ERR_INTERNAL; break; } memcpy(p,&nodes[i].job_type,8); memcpy(p+8,&nodes[i].payload_version,4); memcpy(p+12,&nodes[i].payload_size,4); if(nodes[i].payload_size) memcpy(p+PAYLOAD_HEADER_SIZE,nodes[i].payload,nodes[i].payload_size); result=jobdb_tx_put_create(tx,100,e.execution_id,p,PAYLOAD_HEADER_SIZE+nodes[i].payload_size); free(p); if(result!=JOBDB_OK) break; workflow_record_t wr={0}; wr.workflow_id=workflow_id; wr.execution_id=e.execution_id; wr.node_id=nodes[i].node_id; wr.policy=policy; wr.dependency_count=nodes[i].dependency_count; for(j=0;j<nodes[i].dependency_count;++j) for(k=0;k<count;++k) if(nodes[k].node_id==nodes[i].dependencies[j]) wr.dependencies[j]=execution_ids[k]; result=jobdb_tx_put_create(tx,104,workflow_node_record_id(workflow_id,nodes[i].node_id),&wr,sizeof wr); }
+    if (result==JOBDB_OK) result=jobdb_tx_put_stats(tx,&stats,stats_revision,has_stats);
+    if (result==JOBDB_OK) result=jobdb_tx_commit(tx); jobdb_tx_rollback(tx); return result;
+ }

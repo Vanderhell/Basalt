@@ -12,11 +12,14 @@ public sealed class BasaltCoreClient : IDisposable
 {
     private nint _handle;
 
-    public BasaltCoreClient(nint jobDbHandle, uint workers = 1, long leaseDuration = 30)
+    internal BasaltCoreClient(nint jobDbHandle, uint workers = 1, long leaseDuration = 30)
     {
         var result = NativeMethods.jobcore_create(jobDbHandle, workers, leaseDuration, out _handle);
         if (result != JobDbResult.Ok) throw new BasaltCoreException(result);
     }
+
+    public BasaltCoreClient(BasaltDatabase database, uint workers = 1, long leaseDuration = 30)
+        : this(database?.Handle ?? throw new ArgumentNullException(nameof(database)), workers, leaseDuration) { }
 
     public event EventHandler<ExecutionSubmittedEventArgs>? ExecutionSubmitted;
 
