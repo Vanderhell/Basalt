@@ -80,6 +80,9 @@ public static class NativeMethods
     public static extern JobDbResult basalt_core_enqueue(nint core, ulong type,
         byte[]? payload, uint size, uint version, long now, uint maxAttempts,
         out ulong executionId);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    public static extern JobDbResult basalt_core_enqueue_idempotent(nint core, string idempotencyKey, ulong type,
+        byte[]? payload, uint size, uint version, long now, uint maxAttempts, out ulong executionId);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     public static extern uint basalt_abi_version();
 

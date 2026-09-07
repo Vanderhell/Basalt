@@ -127,6 +127,13 @@ jobdb_result_t jobdb_execution_enqueue_extra(jobdb_t *db, const jobdb_execution_
                                               uint32_t payload_record_type, const void *payload,
                                               uint32_t payload_size, uint32_t extra_record_type,
                                               const void *extra_payload, uint32_t extra_payload_size);
+jobdb_result_t jobdb_execution_enqueue_receipt(jobdb_t *db, const jobdb_execution_t *execution,
+                                                uint32_t payload_record_type, const void *payload,
+                                                uint32_t payload_size, uint64_t receipt_id,
+                                                const void *receipt_payload, uint32_t receipt_size);
+jobdb_result_t jobdb_idempotency_get(jobdb_t *db, uint64_t receipt_id,
+                                     void *payload, uint32_t payload_capacity,
+                                     uint32_t *out_size);
 jobdb_result_t jobdb_execution_get(jobdb_t *db, uint64_t execution_id,
                                    jobdb_execution_t *out_execution);
 jobdb_result_t jobdb_execution_transition(jobdb_t *db, uint64_t execution_id,
