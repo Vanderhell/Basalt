@@ -111,6 +111,7 @@ static void heartbeat_stop(heartbeat_t *heartbeat) {
 }
 
 static jobdb_result_t complete_with_retry(jobdb_t *db,uint64_t id,const jobdb_worker_id_t*w,uint64_t token){jobdb_result_t r=JOBDB_ERR_BUSY;for(unsigned i=0;i<100&&(r==JOBDB_ERR_BUSY||r==JOBDB_ERR_CONFLICT);i++){r=jobdb_execution_complete(db,id,w,token);if(r==JOBDB_ERR_BUSY||r==JOBDB_ERR_CONFLICT)sleep_ms(2);}return r;}
+static jobdb_result_t finalize_with_retry(jobdb_t *db,uint64_t id,const jobdb_worker_id_t*w,uint64_t token,jobdb_execution_state_t state,int32_t result_code,int32_t error_code){jobdb_result_t r=JOBDB_ERR_BUSY;for(unsigned i=0;i<100&&(r==JOBDB_ERR_BUSY||r==JOBDB_ERR_CONFLICT);i++){r=jobdb_execution_finalize(db,id,w,token,state,result_code,error_code);if(r==JOBDB_ERR_BUSY||r==JOBDB_ERR_CONFLICT)sleep_ms(2);}return r;}
 #define jobdb_execution_complete(db,id,w,token) complete_with_retry((db),(id),(w),(token))
 static void process_one(jobcore_t *c, const jobdb_worker_id_t *worker) {
     jobdb_execution_t execution; jobdb_record_t record = {0}; core_handler_t handler = {0};
@@ -135,7 +136,7 @@ static void process_one(jobcore_t *c, const jobdb_worker_id_t *worker) {
     } else if (result == JOBDB_OK) result = JOBDB_ERR_CORRUPT;
     if (record.payload) jobdb_record_free(&record); heartbeat_stop(&heartbeat);
     if (result == JOBDB_OK) { if (jobdb_execution_complete(c->db, execution.execution_id, worker, execution.fencing_token) == JOBDB_OK) workflow_progress(c, execution.execution_id); }
-    else { jobdb_record_t retry_record = {0}; retry_record_t policy = {0}; int has_retry = jobdb_record_get(c->db, RETRY_RECORD_TYPE, execution.execution_id, &retry_record) == JOBDB_OK && retry_record.payload_size == sizeof policy; if (has_retry) memcpy(&policy, retry_record.payload, sizeof policy); if (retry_record.payload) jobdb_record_free(&retry_record); if (has_retry && policy.policy != JOBCORE_RETRY_NONE && execution.attempt + 1u < policy.max_attempts) { int64_t eligible = current_time() + retry_delay(&policy, execution.attempt + 1u, execution.execution_id); jobdb_result_t retry_result = JOBDB_ERR_BUSY; unsigned retry_count; for (retry_count = 0; retry_count < 100 && retry_result == JOBDB_ERR_BUSY; ++retry_count) { retry_result = jobdb_execution_retry(c->db, execution.execution_id, worker, execution.fencing_token, eligible, NULL); if (retry_result == JOBDB_ERR_BUSY) sleep_ms(2); } } else { uint64_t revision; jobdb_execution_state_t final_state = has_retry && policy.policy != JOBCORE_RETRY_NONE ? JOBDB_EXEC_DEAD : JOBDB_EXEC_FAILED; if (jobdb_execution_transition(c->db, execution.execution_id, execution.revision, final_state, &revision) == JOBDB_OK) { jobdb_ledger_entry_t entry = {0}; entry.execution_id = execution.execution_id; entry.job_definition_id = execution.job_definition_id; entry.started_at = started_at; entry.finished_at = current_time(); entry.attempt = execution.attempt; entry.final_state = final_state; entry.error_code = (int32_t)result; (void)jobdb_ledger_append(c->db, &entry); } } }
+    else { jobdb_record_t retry_record = {0}; retry_record_t policy = {0}; int has_retry = jobdb_record_get(c->db, RETRY_RECORD_TYPE, execution.execution_id, &retry_record) == JOBDB_OK && retry_record.payload_size == sizeof policy; if (has_retry) memcpy(&policy, retry_record.payload, sizeof policy); if (retry_record.payload) jobdb_record_free(&retry_record); if (has_retry && policy.policy != JOBCORE_RETRY_NONE && execution.attempt + 1u < policy.max_attempts) { int64_t eligible = current_time() + retry_delay(&policy, execution.attempt + 1u, execution.execution_id); jobdb_result_t retry_result = JOBDB_ERR_BUSY; unsigned retry_count; for (retry_count = 0; retry_count < 100 && retry_result == JOBDB_ERR_BUSY; ++retry_count) { retry_result = jobdb_execution_retry(c->db, execution.execution_id, worker, execution.fencing_token, eligible, NULL); if (retry_result == JOBDB_ERR_BUSY || retry_result == JOBDB_ERR_CONFLICT) sleep_ms(2); } } else { jobdb_execution_state_t final_state = has_retry && policy.policy != JOBCORE_RETRY_NONE ? JOBDB_EXEC_DEAD : JOBDB_EXEC_FAILED; (void)finalize_with_retry(c->db, execution.execution_id, worker, execution.fencing_token, final_state, 0, (int32_t)result); } }
 }
 
 static uint64_t allocate_execution_id(jobcore_t *c) {
@@ -143,12 +144,19 @@ static uint64_t allocate_execution_id(jobcore_t *c) {
     return jobdb_allocate_execution_id(c->db,&id)==JOBDB_OK?id:0;
 }
 static int load_all_record_ids(jobcore_t *c, uint32_t type, uint64_t **out, size_t *count) {
-    size_t n = 0; uint64_t *ids;
-    if (jobdb_list_record_ids(c->db, type, NULL, 0, &n) != JOBDB_OK) return 0;
-    ids = n ? (uint64_t *)malloc(n * sizeof *ids) : NULL;
-    if (n && !ids) return 0;
-    if (jobdb_list_record_ids(c->db, type, ids, n, &n) != JOBDB_OK) { free(ids); return 0; }
-    *out = ids; *count = n; return 1;
+    uint64_t *ids = NULL; size_t capacity = 0, observed = 0;
+    unsigned attempt;
+    if (jobdb_list_record_ids(c->db, type, NULL, 0, &capacity) != JOBDB_OK) return 0;
+    for (attempt = 0; attempt < 8; ++attempt) {
+        if (capacity > SIZE_MAX / sizeof *ids) return 0;
+        if (!ids && capacity) { ids = (uint64_t *)malloc(capacity * sizeof *ids); if (!ids) return 0; }
+        observed = 0;
+        if (jobdb_list_record_ids(c->db, type, ids, capacity, &observed) != JOBDB_OK) { free(ids); return 0; }
+        if (observed <= capacity) { *out = ids; *count = observed; return 1; }
+        if (observed > SIZE_MAX / sizeof *ids) { free(ids); return 0; }
+        { uint64_t *grown = (uint64_t *)realloc(ids, observed * sizeof *ids); if (!grown) { free(ids); return 0; } ids = grown; capacity = observed; }
+    }
+    free(ids); return 0;
 }
 
 static int64_t latest_finished_for_schedule(jobcore_t *c, uint64_t schedule_id) {
@@ -289,7 +297,7 @@ jobdb_result_t jobcore_stop_with_grace(jobcore_t *c, uint32_t grace_ms) { uint32
 jobdb_result_t jobcore_stop(jobcore_t *c) { return c ? jobcore_stop_with_grace(c, c->grace_ms) : JOBDB_ERR_INVALID_ARGUMENT; }
 jobdb_result_t jobcore_register_handler(jobcore_t *c, uint64_t type, jobcore_handler_fn fn, void *data) { core_handler_t *h; if (!c || !type || !fn) return JOBDB_ERR_INVALID_ARGUMENT; mutex_lock(&c->mutex); h = find_handler(c, type); if (!h && c->handler_count < MAX_HANDLERS) h = &c->handlers[c->handler_count++]; if (!h) { mutex_unlock(&c->mutex); return JOBDB_ERR_LIMIT; } h->type = type; h->fn = fn; h->data = data; mutex_unlock(&c->mutex); return JOBDB_OK; }
 jobdb_result_t jobcore_register_handler_name(jobcore_t *c, const char *name, jobcore_handler_fn fn, void *data, uint64_t *out) { uint64_t type; if (!name || !*name) return JOBDB_ERR_INVALID_ARGUMENT; type = hash_name(name); if (out) *out = type; return jobcore_register_handler(c, type, fn, data); }
-jobdb_result_t jobcore_enqueue(jobcore_t *c, uint64_t type, const void *payload, uint32_t size, uint32_t version, int64_t now, uint32_t max_attempts, uint64_t *out) { jobdb_execution_t e; uint64_t id, revision; jobdb_result_t result; if (!c || !type || (size && !payload) || !out) return JOBDB_ERR_INVALID_ARGUMENT; id=allocate_execution_id(c);if(!id)return JOBDB_ERR_LIMIT; memset(&e, 0, sizeof e); e.execution_id = id; e.job_definition_id = type; e.state = JOBDB_EXEC_CREATED; e.created_at = now; e.eligible_at = now; e.max_attempts = max_attempts ? max_attempts : 1; result = jobdb_execution_create(c->db, &e); if (result != JOBDB_OK) return result; result = store_payload(c, PAYLOAD_RECORD_TYPE, id, type, version, payload, size); if (result != JOBDB_OK) return result; result = jobdb_execution_transition(c->db, id, 1, JOBDB_EXEC_READY, &revision); if (result != JOBDB_OK) return result; *out = id; return JOBDB_OK; }
+jobdb_result_t jobcore_enqueue(jobcore_t *c, uint64_t type, const void *payload, uint32_t size, uint32_t version, int64_t now, uint32_t max_attempts, uint64_t *out) { jobdb_execution_t e; uint64_t id; uint8_t *buffer; jobdb_result_t result; if (!c || !type || (size && !payload) || !out) return JOBDB_ERR_INVALID_ARGUMENT; if (size > UINT32_MAX - PAYLOAD_HEADER_SIZE) return JOBDB_ERR_LIMIT; id=allocate_execution_id(c);if(!id)return JOBDB_ERR_LIMIT; buffer=(uint8_t *)malloc(PAYLOAD_HEADER_SIZE + (size_t)size); if (!buffer) return JOBDB_ERR_INTERNAL; memcpy(buffer, &type, 8); memcpy(buffer + 8, &version, 4); memcpy(buffer + 12, &size, 4); if (size) memcpy(buffer + PAYLOAD_HEADER_SIZE, payload, size); memset(&e, 0, sizeof e); e.execution_id = id; e.job_definition_id = type; e.state = JOBDB_EXEC_READY; e.created_at = now; e.eligible_at = now; e.max_attempts = max_attempts ? max_attempts : 1; result = jobdb_execution_enqueue(c->db, &e, PAYLOAD_RECORD_TYPE, buffer, PAYLOAD_HEADER_SIZE + size); free(buffer); if (result == JOBDB_OK) *out = id; return result; }
 jobdb_result_t jobcore_enqueue_name(jobcore_t *c, const char *name, const void *payload, uint32_t size, uint32_t version, int64_t now, uint32_t max_attempts, uint64_t *out) { if (!name || !*name) return JOBDB_ERR_INVALID_ARGUMENT; return jobcore_enqueue(c, hash_name(name), payload, size, version, now, max_attempts, out); }
 jobdb_result_t jobcore_enqueue_with_retry(jobcore_t *c, uint64_t type, const void *payload, uint32_t size, uint32_t version, int64_t now, const jobcore_retry_spec_t *spec, uint64_t *out) { retry_record_t record; jobdb_result_t result; if (!spec || spec->policy < JOBCORE_RETRY_NONE || spec->policy > JOBCORE_RETRY_EXPONENTIAL_WITH_JITTER || spec->max_attempts == 0 || spec->initial_delay < 0 || spec->max_delay < 0 || spec->jitter > 86400u) return JOBDB_ERR_INVALID_ARGUMENT; result = jobcore_enqueue(c, type, payload, size, version, now, spec->max_attempts, out); if (result != JOBDB_OK || spec->policy == JOBCORE_RETRY_NONE) return result; memset(&record, 0, sizeof record); record.policy = (uint32_t)spec->policy; record.max_attempts = spec->max_attempts; record.initial_delay = spec->initial_delay; record.max_delay = spec->max_delay; record.backoff_factor = spec->backoff_factor; record.jitter = spec->jitter; return jobdb_record_create(c->db, RETRY_RECORD_TYPE, *out, &record, (uint32_t)sizeof record); }
 jobdb_result_t jobcore_schedule_create(jobcore_t *c, const jobcore_schedule_spec_t *spec) {

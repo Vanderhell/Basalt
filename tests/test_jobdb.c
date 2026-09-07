@@ -150,7 +150,7 @@ int main(int argc, char **argv) {
        assert(jobdb_execution_create(d,&e)==JOBDB_OK); assert(jobdb_claim_next(d,&w,10,100,&claimed)==JOBDB_OK); assert(claimed.state==JOBDB_EXEC_LEASED && claimed.fencing_token==1);
        assert(jobdb_renew_lease(d,701,&other,1,200)==JOBDB_ERR_STALE_LEASE); assert(jobdb_renew_lease(d,701,&w,1,200)==JOBDB_OK);
        assert(jobdb_execution_transition(d,701,claimed.revision,JOBDB_EXEC_RUNNING,NULL)==JOBDB_ERR_CONFLICT); assert(jobdb_execution_transition(d,701,claimed.revision+1,JOBDB_EXEC_RUNNING,NULL)==JOBDB_OK);
-       assert(jobdb_execution_complete(d,701,&other,1)==JOBDB_ERR_STALE_LEASE); assert(jobdb_execution_complete(d,701,&w,1)==JOBDB_OK); }
+       assert(jobdb_execution_finalize(d,701,&other,1,JOBDB_EXEC_DONE,0,0)==JOBDB_ERR_STALE_LEASE); assert(jobdb_execution_complete(d,701,&w,1)==JOBDB_OK); assert(jobdb_execution_retry(d,701,&w,1,20,NULL)==JOBDB_ERR_STALE_LEASE); { jobdb_ledger_entry_t le; jobdb_stats_t st; assert(jobdb_ledger_get(d,701,&le)==JOBDB_OK && le.final_state==JOBDB_EXEC_DONE); assert(jobdb_get_stats(d,&st)==JOBDB_OK && st.completed_total==1); } }
      jobdb_close(d);
      fresh(); assert(jobdb_open("jobdb-test", &d) == JOBDB_OK);
      { jobdb_execution_t e={0}, got; jobdb_worker_id_t w={{3}}; uint32_t count=0;
@@ -260,6 +260,40 @@ int main(int argc, char **argv) {
     raw_manifest(0, (const unsigned char *)"garbage", 7);
     raw_manifest(1, (const unsigned char *)"garbage", 7);
     assert(jobdb_open("jobdb-test", &d) == JOBDB_ERR_CORRUPT);
+    fresh(); assert(jobdb_open("jobdb-test", &d) == JOBDB_OK);
+    {
+        jobdb_execution_t e={0}, got; jobdb_worker_id_t w={{9}}; jobdb_execution_t claimed; jobdb_stats_t stats; jobdb_ledger_entry_t ledger; jobdb_record_t payload={0};
+        const unsigned char bytes[] = {7, 8, 9};
+        e.execution_id=1000; e.job_definition_id=77; e.state=JOBDB_EXEC_READY; e.created_at=10; e.eligible_at=10; e.max_attempts=3;
+        jobdb_test_fail_next(d, JOBDB_FAILURE_AFTER_COMMIT);
+        assert(jobdb_execution_enqueue(d,&e,100,bytes,sizeof bytes)==JOBDB_ERR_IO);
+        jobdb_close(d); assert(jobdb_open("jobdb-test",&d)==JOBDB_OK);
+        assert(jobdb_execution_get(d,1000,&got)==JOBDB_OK && got.state==JOBDB_EXEC_READY);
+        assert(jobdb_record_get(d,100,1000,&payload)==JOBDB_OK && payload.payload_size==sizeof bytes); jobdb_record_free(&payload);
+        assert(jobdb_get_stats(d,&stats)==JOBDB_OK && stats.submitted_total==1);
+        assert(jobdb_claim_next(d,&w,10,100,&claimed)==JOBDB_OK);
+        assert(jobdb_execution_start(d,1000,&w,claimed.fencing_token,10,NULL)==JOBDB_OK);
+        jobdb_test_fail_next(d, JOBDB_FAILURE_AFTER_COMMIT);
+        assert(jobdb_execution_finalize(d,1000,&w,claimed.fencing_token,JOBDB_EXEC_DONE,0,0)==JOBDB_ERR_IO);
+        jobdb_close(d); assert(jobdb_open("jobdb-test",&d)==JOBDB_OK);
+        assert(jobdb_execution_get(d,1000,&got)==JOBDB_OK && got.state==JOBDB_EXEC_DONE && got.finished_at!=0);
+        assert(jobdb_ledger_get(d,1000,&ledger)==JOBDB_OK && ledger.final_state==JOBDB_EXEC_DONE);
+        assert(jobdb_get_stats(d,&stats)==JOBDB_OK && stats.submitted_total==1 && stats.completed_total==1);
+    }
+    jobdb_close(d);
+    fresh(); assert(jobdb_open("jobdb-test", &d) == JOBDB_OK);
+    {
+        jobdb_execution_t e={0}, claimed, got; jobdb_worker_id_t w={{10}}; jobdb_stats_t stats; const unsigned char byte=1;
+        e.execution_id=1001; e.job_definition_id=78; e.state=JOBDB_EXEC_READY; e.created_at=10; e.eligible_at=10; e.max_attempts=3;
+        assert(jobdb_execution_enqueue(d,&e,100,&byte,1)==JOBDB_OK); assert(jobdb_claim_next(d,&w,10,100,&claimed)==JOBDB_OK);
+        assert(jobdb_execution_start(d,1001,&w,claimed.fencing_token,10,NULL)==JOBDB_OK);
+        jobdb_test_fail_next(d, JOBDB_FAILURE_AFTER_COMMIT);
+        assert(jobdb_execution_retry(d,1001,&w,claimed.fencing_token,20,NULL)==JOBDB_ERR_IO);
+        jobdb_close(d); assert(jobdb_open("jobdb-test",&d)==JOBDB_OK);
+        assert(jobdb_execution_get(d,1001,&got)==JOBDB_OK && got.state==JOBDB_EXEC_READY && got.attempt==1 && got.eligible_at==20);
+        assert(jobdb_get_stats(d,&stats)==JOBDB_OK && stats.retried_total==1);
+    }
+    jobdb_close(d);
     rmdb();
     puts("jobdb tests passed");
     return 0;
