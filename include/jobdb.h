@@ -162,6 +162,9 @@ jobdb_result_t jobdb_execution_finalize_unleased(jobdb_t *db, uint64_t execution
                                                  uint64_t expected_revision,
                                                  jobdb_execution_state_t final_state,
                                                  int32_t result_code, int32_t error_code);
+jobdb_result_t jobdb_execution_requeue_admin(jobdb_t *db, uint64_t execution_id,
+                                             uint64_t expected_revision,
+                                             uint64_t *out_revision);
 jobdb_result_t jobdb_execution_retry(jobdb_t *db, uint64_t execution_id,
                                      const jobdb_worker_id_t *worker,
                                      uint64_t fencing_token, int64_t eligible_at,

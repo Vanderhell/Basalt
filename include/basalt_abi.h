@@ -23,6 +23,12 @@ typedef struct basalt_stats_view {
     uint64_t submitted_total, started_total, completed_total, failed_total;
     uint64_t retried_total, cancelled_total, dead_total, recovered_total;
 } basalt_stats_view_t;
+typedef struct basalt_ledger_view {
+    uint64_t execution_id, job_definition_id, schedule_id, workflow_id;
+    int64_t started_at, finished_at, duration;
+    uint32_t attempt, final_state;
+    int32_t result_code, error_code;
+} basalt_ledger_view_t;
 typedef struct basalt_schedule_view {
     uint64_t schedule_id, job_definition_id;
     uint32_t schedule_type, enabled;
@@ -33,6 +39,7 @@ typedef struct basalt_schedule_view {
 } basalt_schedule_view_t;
 typedef struct basalt_retry_spec_v1 { uint32_t policy, max_attempts, jitter, reserved; int64_t initial_delay, max_delay; double backoff_factor; } basalt_retry_spec_v1_t;
 typedef struct basalt_workflow_node_v1 { uint64_t node_id, job_type; const void *payload; uint32_t payload_size, payload_version, dependency_count; uint64_t dependencies[8]; } basalt_workflow_node_v1_t;
+typedef struct basalt_workflow_status_v1 { uint64_t workflow_id; uint32_t node_count, ready_count, blocked_count, running_count, terminal_count, failed_count, cancelled_count, cancel_requested; } basalt_workflow_status_v1_t;
 
 uint32_t basalt_abi_version(void);
 jobdb_result_t basalt_db_create(const char *path, jobdb_t **out_db);
@@ -45,6 +52,7 @@ jobdb_result_t basalt_execution_get(jobdb_t *db, uint64_t execution_id, basalt_e
 jobdb_result_t basalt_execution_list(jobdb_t *db, uint64_t *ids, size_t capacity, size_t *out_count);
 jobdb_result_t basalt_execution_cancel(jobdb_t *db, uint64_t execution_id, uint64_t expected_revision);
 jobdb_result_t basalt_execution_requeue(jobdb_t *db, uint64_t execution_id, uint64_t expected_revision);
+jobdb_result_t basalt_ledger_get(jobdb_t *db, uint64_t execution_id, basalt_ledger_view_t *out_entry);
 jobdb_result_t basalt_stats_get(jobdb_t *db, basalt_stats_view_t *out_stats);
 jobdb_result_t basalt_db_health(jobdb_t *db);
 jobdb_result_t basalt_schedule_create(jobcore_t *core, uint64_t schedule_id, uint64_t job_type, uint32_t schedule_type, int64_t first_fire_at, int64_t interval, uint32_t interval_mode, uint64_t max_occurrences, const void *payload, uint32_t payload_size, uint32_t payload_version, const char *cron_expression, const char *timezone, uint32_t misfire_policy, uint32_t overlap_policy, uint32_t catch_up_max);
@@ -64,6 +72,8 @@ jobdb_result_t basalt_core_enqueue_retry(jobcore_t *core, uint64_t job_type, con
 jobdb_result_t basalt_core_enqueue_idempotent(jobcore_t *core, const char *idempotency_key, uint64_t job_type, const void *payload, uint32_t payload_size, uint32_t payload_version, int64_t now, uint32_t max_attempts, uint64_t *out_execution_id);
 jobdb_result_t basalt_core_schedule_create(jobcore_t *core, const jobcore_schedule_spec_t *spec);
 jobdb_result_t basalt_core_workflow_submit(jobcore_t *core, uint64_t workflow_id, const basalt_workflow_node_v1_t *nodes, uint32_t count, uint32_t policy, int64_t now);
+jobdb_result_t basalt_workflow_get(jobcore_t *core, uint64_t workflow_id, basalt_workflow_status_v1_t *out_status);
+jobdb_result_t basalt_workflow_cancel(jobcore_t *core, uint64_t workflow_id);
 
 #ifdef __cplusplus
 }

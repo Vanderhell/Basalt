@@ -40,6 +40,14 @@ public static class NativeMethods
         public ulong SubmittedTotal, StartedTotal, CompletedTotal, FailedTotal;
         public ulong RetriedTotal, CancelledTotal, DeadTotal, RecoveredTotal;
     }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct LedgerView
+    {
+        public ulong ExecutionId, JobDefinitionId, ScheduleId, WorkflowId;
+        public long StartedAt, FinishedAt, Duration;
+        public uint Attempt, FinalState;
+        public int ResultCode, ErrorCode;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     public struct ScheduleView
@@ -53,6 +61,7 @@ public static class NativeMethods
     }
     [StructLayout(LayoutKind.Sequential)] public struct RetrySpec { public uint Policy, MaxAttempts, Jitter, Reserved; public long InitialDelay, MaxDelay; public double BackoffFactor; }
     [StructLayout(LayoutKind.Sequential)] public struct WorkflowNode { public ulong NodeId, JobType; public IntPtr Payload; public uint PayloadSize, PayloadVersion, DependencyCount; [MarshalAs(UnmanagedType.ByValArray, SizeConst=8)] public ulong[] Dependencies; }
+    [StructLayout(LayoutKind.Sequential)] public struct WorkflowStatus { public ulong WorkflowId; public uint NodeCount, ReadyCount, BlockedCount, RunningCount, TerminalCount, FailedCount, CancelledCount, CancelRequested; }
 
     [StructLayout(LayoutKind.Sequential)]
     public struct ExecutionContext
@@ -98,6 +107,8 @@ public static class NativeMethods
         byte[]? payload, uint size, uint version, long now, uint maxAttempts, out ulong executionId);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] public static extern JobDbResult basalt_core_enqueue_retry(nint core, ulong type, byte[]? payload, uint size, uint version, long now, ref RetrySpec retry, out ulong executionId);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] public static extern JobDbResult basalt_core_workflow_submit(nint core, ulong workflowId, [In] WorkflowNode[] nodes, uint count, uint policy, long now);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] public static extern JobDbResult basalt_workflow_get(nint core, ulong workflowId, out WorkflowStatus status);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] public static extern JobDbResult basalt_workflow_cancel(nint core, ulong workflowId);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     public static extern uint basalt_abi_version();
 
@@ -125,6 +136,8 @@ public static class NativeMethods
     public static extern JobDbResult basalt_execution_cancel(nint db, ulong executionId, ulong expectedRevision);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     public static extern JobDbResult basalt_execution_requeue(nint db, ulong executionId, ulong expectedRevision);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    public static extern JobDbResult basalt_ledger_get(nint db, ulong executionId, out LedgerView entry);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     public static extern JobDbResult basalt_stats_get(nint db, out StatsView stats);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]

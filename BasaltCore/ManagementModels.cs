@@ -17,6 +17,21 @@ public sealed class BasaltStats
     public ulong RetriedTotal { get; } public ulong CancelledTotal { get; } public ulong DeadTotal { get; } public ulong RecoveredTotal { get; }
 }
 
+public sealed class BasaltLedgerEntry
+{
+    public ulong ExecutionId { get; internal set; }
+    public ulong JobDefinitionId { get; internal set; }
+    public ulong ScheduleId { get; internal set; }
+    public ulong WorkflowId { get; internal set; }
+    public long StartedAt { get; internal set; }
+    public long FinishedAt { get; internal set; }
+    public long Duration { get; internal set; }
+    public uint Attempt { get; internal set; }
+    public uint FinalState { get; internal set; }
+    public int ResultCode { get; internal set; }
+    public int ErrorCode { get; internal set; }
+}
+
 public sealed class BasaltScheduleInfo
 {
     public ulong ScheduleId { get; set; } public ulong JobDefinitionId { get; set; } public uint ScheduleType { get; set; } public bool Enabled { get; set; } public ulong TimezoneReference { get; set; }

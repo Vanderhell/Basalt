@@ -101,9 +101,10 @@ int main(void) {
     assert(jobdb_execution_finalize_unleased(db, workflow_root, 1, JOBDB_EXEC_CANCELLED, 0, 0) == JOBDB_OK);
     assert(jobcore_start(core) == JOBDB_OK);
     wait_state(db, workflow_child, JOBDB_EXEC_CANCELLED);
-    wait_state(db, id, JOBDB_EXEC_DONE);
-    wait_state(db, missing, JOBDB_EXEC_FAILED);
-    assert(handled >= 1);
+     wait_state(db, id, JOBDB_EXEC_DONE);
+     wait_state(db, missing, JOBDB_EXEC_FAILED);
+     { jobdb_ledger_entry_t ledger; jobdb_execution_t completed; assert(jobdb_ledger_get(db, id, &ledger) == JOBDB_OK && ledger.final_state == JOBDB_EXEC_DONE); assert(jobdb_execution_get(db, id, &completed) == JOBDB_OK); assert(jobdb_execution_requeue_admin(db, id, completed.revision, NULL) == JOBDB_OK); assert(jobdb_execution_get(db, id, &completed) == JOBDB_OK && completed.state == JOBDB_EXEC_READY); assert(jobdb_ledger_get(db, id, &ledger) == JOBDB_OK && ledger.final_state == JOBDB_EXEC_DONE); assert(jobdb_execution_requeue_admin(db, id, completed.revision, NULL) == JOBDB_ERR_INVALID_ARGUMENT); }
+     assert(handled >= 1);
     assert(jobcore_stop(core) == JOBDB_OK);
     jobcore_destroy(core); core = NULL;
     jobdb_close(db); db = NULL;
