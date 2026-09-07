@@ -83,6 +83,7 @@ int main(void) {
     jobdb_close(db); db = NULL;
     assert(jobdb_open("jobcore-test", &db) == JOBDB_OK);
     assert(jobdb_execution_get(db, id, &persisted) == JOBDB_OK);
+    { jobcore_t *test_core = NULL; jobcore_retry_spec_t retry = { JOBCORE_RETRY_FIXED, 3, 1, 10, 1.0, 0 }; uint64_t retry_id = 0; jobdb_record_t policy = {0}; assert(jobcore_create(db, 1, 10, &test_core) == JOBDB_OK); jobdb_test_fail_next(db, JOBDB_FAILURE_AFTER_COMMIT); assert(jobcore_enqueue_with_retry(test_core, 42, "job", 3, 7, now, &retry, &retry_id) == JOBDB_ERR_IO); jobcore_destroy(test_core); jobdb_close(db); db = NULL; assert(jobdb_open("jobcore-test", &db) == JOBDB_OK); assert(jobdb_execution_get(db, retry_id, &persisted) == JOBDB_OK && persisted.state == JOBDB_EXEC_READY); assert(jobdb_record_get(db, 103, retry_id, &policy) == JOBDB_OK && policy.payload_size > 0); jobdb_record_free(&policy); }
     assert(jobdb_verify("jobcore-test") == JOBDB_OK);
     jobdb_close(db);
     puts("jobcore tests passed");

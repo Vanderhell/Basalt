@@ -120,6 +120,10 @@ jobdb_result_t jobdb_execution_create(jobdb_t *db, const jobdb_execution_t *exec
 jobdb_result_t jobdb_execution_enqueue(jobdb_t *db, const jobdb_execution_t *execution,
                                         uint32_t payload_record_type, const void *payload,
                                         uint32_t payload_size);
+jobdb_result_t jobdb_execution_enqueue_extra(jobdb_t *db, const jobdb_execution_t *execution,
+                                              uint32_t payload_record_type, const void *payload,
+                                              uint32_t payload_size, uint32_t extra_record_type,
+                                              const void *extra_payload, uint32_t extra_payload_size);
 jobdb_result_t jobdb_execution_get(jobdb_t *db, uint64_t execution_id,
                                    jobdb_execution_t *out_execution);
 jobdb_result_t jobdb_execution_transition(jobdb_t *db, uint64_t execution_id,
@@ -144,6 +148,10 @@ jobdb_result_t jobdb_execution_finalize(jobdb_t *db, uint64_t execution_id,
                                         uint64_t fencing_token,
                                         jobdb_execution_state_t final_state,
                                         int32_t result_code, int32_t error_code);
+jobdb_result_t jobdb_execution_finalize_unleased(jobdb_t *db, uint64_t execution_id,
+                                                 uint64_t expected_revision,
+                                                 jobdb_execution_state_t final_state,
+                                                 int32_t result_code, int32_t error_code);
 jobdb_result_t jobdb_execution_retry(jobdb_t *db, uint64_t execution_id,
                                      const jobdb_worker_id_t *worker,
                                      uint64_t fencing_token, int64_t eligible_at,
