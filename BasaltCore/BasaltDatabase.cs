@@ -35,6 +35,7 @@ public sealed class BasaltDatabase : IDisposable
     private static BasaltDatabase OpenCore(string path, bool open)
     {
         if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("A database path is required.", nameof(path));
+        if (NativeMethods.basalt_abi_version() != 1) throw new BasaltException(JobDbResult.Version);
         IntPtr value; JobDbResult result = open ? NativeMethods.basalt_db_open(path, out value) : NativeMethods.basalt_db_create(path, out value);
         if (result != JobDbResult.Ok) throw new BasaltException(result);
         return new BasaltDatabase(new BasaltDbHandle(value));

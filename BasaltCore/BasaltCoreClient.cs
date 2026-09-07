@@ -14,7 +14,7 @@ public sealed class BasaltCoreClient : IDisposable
 
     internal BasaltCoreClient(nint jobDbHandle, uint workers = 1, long leaseDuration = 30)
     {
-        var result = NativeMethods.jobcore_create(jobDbHandle, workers, leaseDuration, out _handle);
+        var result = NativeMethods.basalt_core_create(jobDbHandle, workers, leaseDuration, out _handle);
         if (result != JobDbResult.Ok) throw new BasaltCoreException(result);
     }
 
@@ -23,8 +23,8 @@ public sealed class BasaltCoreClient : IDisposable
 
     public event EventHandler<ExecutionSubmittedEventArgs>? ExecutionSubmitted;
 
-    public void Start() => Check(NativeMethods.jobcore_start(_handle));
-    public void Stop() => Check(NativeMethods.jobcore_stop(_handle));
+    public void Start() => Check(NativeMethods.basalt_core_start(_handle));
+    public void Stop() => Check(NativeMethods.basalt_core_stop(_handle));
 
     public Task<ulong> EnqueueAsync(ulong jobType, ReadOnlyMemory<byte> payload,
         uint payloadVersion = 1, uint maxAttempts = 1,
@@ -35,7 +35,7 @@ public sealed class BasaltCoreClient : IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             var bytes = payload.ToArray();
-            Check(NativeMethods.jobcore_enqueue(_handle, jobType, bytes, (uint)bytes.Length,
+            Check(NativeMethods.basalt_core_enqueue(_handle, jobType, bytes, (uint)bytes.Length,
                 payloadVersion, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), maxAttempts,
                 out var executionId));
             ExecutionSubmitted?.Invoke(this, new ExecutionSubmittedEventArgs(executionId, jobType));
@@ -46,8 +46,8 @@ public sealed class BasaltCoreClient : IDisposable
     public void Dispose()
     {
         if (_handle == 0) return;
-        NativeMethods.jobcore_stop(_handle);
-        NativeMethods.jobcore_destroy(_handle);
+        NativeMethods.basalt_core_stop(_handle);
+        NativeMethods.basalt_core_destroy(_handle);
         _handle = 0;
         GC.SuppressFinalize(this);
     }

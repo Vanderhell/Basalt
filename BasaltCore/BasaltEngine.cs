@@ -14,7 +14,14 @@ public sealed class BasaltEngine : IDisposable
     public BasaltEngine(BasaltDatabase database, uint workers = 1, long leaseDuration = 30)
     {
         _database = database ?? throw new ArgumentNullException(nameof(database));
-        BasaltDatabase.Check(NativeMethods.jobcore_create(database.Handle, workers, leaseDuration, out _core));
+        BasaltDatabase.Check(NativeMethods.basalt_core_create(database.Handle, workers, leaseDuration, out _core));
+    }
+
+    public BasaltEngine(BasaltDatabase database, BasaltOptions options)
+    {
+        _database = database ?? throw new ArgumentNullException(nameof(database));
+        if (options == null) throw new ArgumentNullException(nameof(options));
+        BasaltDatabase.Check(NativeMethods.basalt_core_create_ex(database.Handle, options.WorkerCount, options.LeaseDurationSeconds, options.StopGraceMilliseconds, out _core));
     }
 
     public void RegisterRawHandler(ulong jobType, Func<ReadOnlyMemory<byte>, uint, int> handler)
@@ -36,7 +43,7 @@ public sealed class BasaltEngine : IDisposable
             }
             catch { return -1; }
         };
-        BasaltDatabase.Check(NativeMethods.jobcore_register_handler(_core, jobType, callback, IntPtr.Zero));
+        BasaltDatabase.Check(NativeMethods.basalt_core_register_handler(_core, jobType, callback, IntPtr.Zero));
         _handlers[jobType] = callback;
     }
 
@@ -62,18 +69,20 @@ public sealed class BasaltEngine : IDisposable
         return EnqueueAsync(JobKey.Hash(stableKey), serializer.Serialize(value), serializer.Version, maxAttempts, cancellationToken);
     }
 
-    public void Start() { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.jobcore_start(_core)); }
-    public void Stop() { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.jobcore_stop(_core)); }
+    public void Start() { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_core_start(_core)); }
+    public void Stop() { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_core_stop(_core)); }
+    public Task StartAsync(CancellationToken cancellationToken = default) { cancellationToken.ThrowIfCancellationRequested(); return Task.Run(Start, cancellationToken); }
+    public Task StopAsync(CancellationToken cancellationToken = default) { cancellationToken.ThrowIfCancellationRequested(); return Task.Run(Stop, cancellationToken); }
     public Task<ulong> EnqueueAsync(ulong jobType, ReadOnlyMemory<byte> payload, uint payloadVersion = 1, uint maxAttempts = 1, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed(); cancellationToken.ThrowIfCancellationRequested(); byte[] bytes = payload.ToArray();
-        return Task.Run(() => { cancellationToken.ThrowIfCancellationRequested(); BasaltDatabase.Check(NativeMethods.jobcore_enqueue(_core, jobType, bytes, (uint)bytes.Length, payloadVersion, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), maxAttempts, out ulong id)); return id; }, cancellationToken);
+        return Task.Run(() => { cancellationToken.ThrowIfCancellationRequested(); BasaltDatabase.Check(NativeMethods.basalt_core_enqueue(_core, jobType, bytes, (uint)bytes.Length, payloadVersion, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), maxAttempts, out ulong id)); return id; }, cancellationToken);
     }
 
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        NativeMethods.jobcore_stop(_core); NativeMethods.jobcore_destroy(_core); _handlers.Clear(); GC.SuppressFinalize(this);
+        NativeMethods.basalt_core_stop(_core); NativeMethods.basalt_core_destroy(_core); _handlers.Clear(); GC.SuppressFinalize(this);
     }
     private void ThrowIfDisposed() { if (Volatile.Read(ref _disposed) != 0) throw new ObjectDisposedException(nameof(BasaltEngine)); }
 }

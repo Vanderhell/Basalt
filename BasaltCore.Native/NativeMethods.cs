@@ -41,22 +41,25 @@ public static class NativeMethods
     private const string Library = "basalt_core_shared";
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-    public static extern JobDbResult jobcore_create(nint db, uint workers, long leaseDuration, out nint core);
+    public static extern JobDbResult basalt_core_create(nint db, uint workers, long leaseDuration, out nint core);
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-    public static extern void jobcore_destroy(nint core);
+    public static extern JobDbResult basalt_core_create_ex(nint db, uint workers, long leaseDuration, uint graceMilliseconds, out nint core);
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-    public static extern JobDbResult jobcore_start(nint core);
+    public static extern void basalt_core_destroy(nint core);
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-    public static extern JobDbResult jobcore_stop(nint core);
+    public static extern JobDbResult basalt_core_start(nint core);
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-    public static extern JobDbResult jobcore_register_handler(nint core, ulong type, JobHandler handler, IntPtr data);
+    public static extern JobDbResult basalt_core_stop(nint core);
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-    public static extern JobDbResult jobcore_enqueue(nint core, ulong type,
+    public static extern JobDbResult basalt_core_register_handler(nint core, ulong type, JobHandler handler, IntPtr data);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    public static extern JobDbResult basalt_core_enqueue(nint core, ulong type,
         byte[]? payload, uint size, uint version, long now, uint maxAttempts,
         out ulong executionId);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
