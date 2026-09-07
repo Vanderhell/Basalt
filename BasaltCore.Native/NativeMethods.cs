@@ -51,6 +51,8 @@ public static class NativeMethods
         public ulong OccurrenceCount, MaxOccurrences, Revision;
         public uint MisfirePolicy, OverlapPolicy;
     }
+    [StructLayout(LayoutKind.Sequential)] public struct RetrySpec { public uint Policy, MaxAttempts, Jitter, Reserved; public long InitialDelay, MaxDelay; public double BackoffFactor; }
+    [StructLayout(LayoutKind.Sequential)] public struct WorkflowNode { public ulong NodeId, JobType; public IntPtr Payload; public uint PayloadSize, PayloadVersion, DependencyCount; [MarshalAs(UnmanagedType.ByValArray, SizeConst=8)] public ulong[] Dependencies; }
 
     [StructLayout(LayoutKind.Sequential)]
     public struct ExecutionContext
@@ -94,6 +96,8 @@ public static class NativeMethods
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
     public static extern JobDbResult basalt_core_enqueue_idempotent(nint core, string idempotencyKey, ulong type,
         byte[]? payload, uint size, uint version, long now, uint maxAttempts, out ulong executionId);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] public static extern JobDbResult basalt_core_enqueue_retry(nint core, ulong type, byte[]? payload, uint size, uint version, long now, ref RetrySpec retry, out ulong executionId);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] public static extern JobDbResult basalt_core_workflow_submit(nint core, ulong workflowId, [In] WorkflowNode[] nodes, uint count, uint policy, long now);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     public static extern uint basalt_abi_version();
 

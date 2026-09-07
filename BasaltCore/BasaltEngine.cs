@@ -85,6 +85,8 @@ public sealed class BasaltEngine : IDisposable
         ThrowIfDisposed(); cancellationToken.ThrowIfCancellationRequested(); byte[] bytes = payload.ToArray();
         return Task.Run(() => { cancellationToken.ThrowIfCancellationRequested(); BasaltDatabase.Check(NativeMethods.basalt_core_enqueue_idempotent(_core, idempotencyKey, jobType, bytes, (uint)bytes.Length, payloadVersion, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), maxAttempts, out ulong id)); return id; }, cancellationToken);
     }
+    public Task<ulong> EnqueueRetryAsync(ulong jobType, ReadOnlyMemory<byte> payload, uint policy, uint maxAttempts, long initialDelaySeconds, long maxDelaySeconds = 0, double backoffFactor = 2, uint jitterSeconds = 0, uint payloadVersion = 1, CancellationToken cancellationToken = default)
+    { ThrowIfDisposed(); cancellationToken.ThrowIfCancellationRequested(); var bytes=payload.ToArray(); return Task.Run(()=>{var retry=new NativeMethods.RetrySpec{Policy=policy,MaxAttempts=maxAttempts,InitialDelay=initialDelaySeconds,MaxDelay=maxDelaySeconds,BackoffFactor=backoffFactor,Jitter=jitterSeconds}; BasaltDatabase.Check(NativeMethods.basalt_core_enqueue_retry(_core,jobType,bytes,(uint)bytes.Length,payloadVersion,DateTimeOffset.UtcNow.ToUnixTimeSeconds(),ref retry,out var id)); return id;},cancellationToken); }
 
     public BasaltExecutionInfo GetExecution(ulong executionId)
     {
@@ -112,6 +114,8 @@ public sealed class BasaltEngine : IDisposable
     public void PauseSchedule(ulong scheduleId, ulong expectedRevision) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_schedule_pause(_core,scheduleId,expectedRevision)); }
     public void ResumeSchedule(ulong scheduleId, ulong expectedRevision) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_schedule_resume(_core,scheduleId,expectedRevision)); }
     public void RemoveSchedule(ulong scheduleId, ulong expectedRevision) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_schedule_remove(_core,scheduleId,expectedRevision)); }
+    public void SubmitWorkflow(ulong workflowId, IReadOnlyList<BasaltWorkflowNode> nodes, BasaltDependencyPolicy policy = BasaltDependencyPolicy.Block)
+    { if(nodes==null||nodes.Count==0)throw new ArgumentException("Workflow nodes are required.",nameof(nodes)); ThrowIfDisposed(); var native=new NativeMethods.WorkflowNode[nodes.Count]; var allocations=new List<IntPtr>(); try { for(int i=0;i<nodes.Count;i++){var n=nodes[i];if(n==null||n.Dependencies.Count>8)throw new ArgumentException("Invalid workflow node.",nameof(nodes));var bytes=n.Payload??new byte[0];var ptr=Marshal.AllocHGlobal(bytes.Length==0?1:bytes.Length);allocations.Add(ptr);if(bytes.Length>0)Marshal.Copy(bytes,0,ptr,bytes.Length);native[i]=new NativeMethods.WorkflowNode{NodeId=n.NodeId,JobType=n.JobType,Payload=ptr,PayloadSize=(uint)bytes.Length,PayloadVersion=n.PayloadVersion,DependencyCount=(uint)n.Dependencies.Count,Dependencies=n.Dependencies.ToArray()};} BasaltDatabase.Check(NativeMethods.basalt_core_workflow_submit(_core,workflowId,native,(uint)native.Length,(uint)policy,DateTimeOffset.UtcNow.ToUnixTimeSeconds())); } finally {foreach(var p in allocations)Marshal.FreeHGlobal(p);} }
 
     public void Dispose()
     {

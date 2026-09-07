@@ -31,6 +31,8 @@ typedef struct basalt_schedule_view {
     uint64_t occurrence_count, max_occurrences, revision;
     uint32_t misfire_policy, overlap_policy;
 } basalt_schedule_view_t;
+typedef struct basalt_retry_spec_v1 { uint32_t policy, max_attempts, jitter, reserved; int64_t initial_delay, max_delay; double backoff_factor; } basalt_retry_spec_v1_t;
+typedef struct basalt_workflow_node_v1 { uint64_t node_id, job_type; const void *payload; uint32_t payload_size, payload_version, dependency_count; uint64_t dependencies[8]; } basalt_workflow_node_v1_t;
 
 uint32_t basalt_abi_version(void);
 jobdb_result_t basalt_db_create(const char *path, jobdb_t **out_db);
@@ -58,10 +60,10 @@ jobdb_result_t basalt_core_start(jobcore_t *core);
 jobdb_result_t basalt_core_stop(jobcore_t *core);
 jobdb_result_t basalt_core_register_handler(jobcore_t *core, uint64_t job_type, jobcore_handler_fn handler, void *user_data);
 jobdb_result_t basalt_core_enqueue(jobcore_t *core, uint64_t job_type, const void *payload, uint32_t payload_size, uint32_t payload_version, int64_t now, uint32_t max_attempts, uint64_t *out_execution_id);
-jobdb_result_t basalt_core_enqueue_retry(jobcore_t *core, uint64_t job_type, const void *payload, uint32_t payload_size, uint32_t payload_version, int64_t now, const jobcore_retry_spec_t *retry, uint64_t *out_execution_id);
+jobdb_result_t basalt_core_enqueue_retry(jobcore_t *core, uint64_t job_type, const void *payload, uint32_t payload_size, uint32_t payload_version, int64_t now, const basalt_retry_spec_v1_t *retry, uint64_t *out_execution_id);
 jobdb_result_t basalt_core_enqueue_idempotent(jobcore_t *core, const char *idempotency_key, uint64_t job_type, const void *payload, uint32_t payload_size, uint32_t payload_version, int64_t now, uint32_t max_attempts, uint64_t *out_execution_id);
 jobdb_result_t basalt_core_schedule_create(jobcore_t *core, const jobcore_schedule_spec_t *spec);
-jobdb_result_t basalt_core_workflow_submit(jobcore_t *core, uint64_t workflow_id, const jobcore_workflow_node_t *nodes, size_t count, jobcore_dependency_policy_t policy, int64_t now);
+jobdb_result_t basalt_core_workflow_submit(jobcore_t *core, uint64_t workflow_id, const basalt_workflow_node_v1_t *nodes, uint32_t count, uint32_t policy, int64_t now);
 
 #ifdef __cplusplus
 }
