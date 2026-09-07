@@ -45,6 +45,16 @@ static void wait_occurrences(jobdb_t *db, uint64_t id, uint64_t wanted) {
     assert(0 && "schedule did not fire enough times");
 }
 
+static uint64_t workflow_execution(jobdb_t *db, uint64_t workflow_id, uint64_t node_id) {
+    uint64_t ids[128], id, stored_workflow, stored_node; size_t count = 0, i; jobdb_record_t record = {0};
+    assert(jobdb_list_record_ids(db, 104, ids, 128, &count) == JOBDB_OK);
+    for (i = 0; i < count; ++i) if (jobdb_record_get(db, 104, ids[i], &record) == JOBDB_OK && record.payload_size >= 24) {
+        memcpy(&stored_workflow, record.payload, sizeof stored_workflow); memcpy(&id, record.payload + 8, sizeof id); memcpy(&stored_node, record.payload + 16, sizeof stored_node); jobdb_record_free(&record);
+        if (stored_workflow == workflow_id && stored_node == node_id) return id;
+    }
+    return 0;
+}
+
 int main(void) {
     jobdb_t *db = NULL;
     jobcore_t *core = NULL;
@@ -55,7 +65,7 @@ int main(void) {
     int64_t next_fire;
     jobcore_workflow_node_t workflow_nodes[2], cycle_nodes[2];
     jobdb_stats_t stats_before, stats_after;
-    uint64_t reserved_a = 0, reserved_b = 0;
+    uint64_t workflow_root = 0, workflow_child = 0;
     assert(jobcore_cron_next_fire("*/15 * * * *", "UTC", now, &next_fire) == JOBDB_OK);
     assert(next_fire > now && next_fire % 900 == 0);
     assert(jobcore_cron_next_fire("0 2 * * *", "Europe/Bratislava", now, &next_fire) == JOBDB_OK);
@@ -80,14 +90,16 @@ int main(void) {
     memset(workflow_nodes, 0, sizeof workflow_nodes);
     workflow_nodes[0].node_id = 7001; workflow_nodes[0].job_type = 42; workflow_nodes[0].payload = "job"; workflow_nodes[0].payload_size = 3; workflow_nodes[0].payload_version = 7;
     workflow_nodes[1].node_id = 7002; workflow_nodes[1].job_type = 42; workflow_nodes[1].payload = "job"; workflow_nodes[1].payload_size = 3; workflow_nodes[1].payload_version = 7; workflow_nodes[1].dependency_count = 1; workflow_nodes[1].dependencies[0] = 7001;
-    assert(jobdb_allocate_execution_id(db, &reserved_a) == JOBDB_OK && jobdb_allocate_execution_id(db, &reserved_b) == JOBDB_OK);
-    assert(jobcore_workflow_submit(core, 7000, workflow_nodes, 2, JOBCORE_DEP_BLOCK, now) == JOBDB_OK);
-    { jobdb_execution_t workflow_first, workflow_second; assert(jobdb_execution_get(db, reserved_b + 1, &workflow_first) == JOBDB_OK && workflow_first.state == JOBDB_EXEC_READY); assert(jobdb_execution_get(db, reserved_b + 2, &workflow_second) == JOBDB_OK && workflow_second.state == JOBDB_EXEC_BLOCKED); }
+    assert(jobcore_workflow_submit(core, 7000, workflow_nodes, 2, JOBCORE_DEP_CANCEL, now) == JOBDB_OK);
+    workflow_root = workflow_execution(db, 7000, 7001); workflow_child = workflow_execution(db, 7000, 7002);
+    { jobdb_execution_t workflow_first, workflow_second; assert(workflow_root && workflow_child); assert(jobdb_execution_get(db, workflow_root, &workflow_first) == JOBDB_OK && workflow_first.state == JOBDB_EXEC_READY); assert(jobdb_execution_get(db, workflow_child, &workflow_second) == JOBDB_OK && workflow_second.state == JOBDB_EXEC_BLOCKED); }
     assert(jobdb_get_stats(db, &stats_before) == JOBDB_OK);
     memcpy(cycle_nodes, workflow_nodes, sizeof cycle_nodes); cycle_nodes[0].node_id = 7101; cycle_nodes[0].dependency_count = 1; cycle_nodes[0].dependencies[0] = 7102; cycle_nodes[1].node_id = 7102; cycle_nodes[1].dependency_count = 1; cycle_nodes[1].dependencies[0] = 7101;
     assert(jobcore_workflow_submit(core, 7100, cycle_nodes, 2, JOBCORE_DEP_BLOCK, now) == JOBDB_ERR_INVALID_ARGUMENT);
     assert(jobdb_get_stats(db, &stats_after) == JOBDB_OK && stats_after.submitted_total == stats_before.submitted_total);
+    assert(jobdb_execution_finalize_unleased(db, workflow_root, 1, JOBDB_EXEC_CANCELLED, 0, 0) == JOBDB_OK);
     assert(jobcore_start(core) == JOBDB_OK);
+    wait_state(db, workflow_child, JOBDB_EXEC_CANCELLED);
     wait_state(db, id, JOBDB_EXEC_DONE);
     wait_state(db, missing, JOBDB_EXEC_FAILED);
     assert(handled >= 1);

@@ -40,6 +40,7 @@ struct jobcore { jobdb_t *db; uint32_t worker_count; int64_t lease_duration; uin
 typedef struct { uint32_t policy, max_attempts, jitter, reserved; int64_t initial_delay, max_delay; double backoff_factor; } retry_record_t;
 typedef struct { uint64_t workflow_id, execution_id, node_id; uint32_t policy, dependency_count; uint64_t dependencies[8]; } workflow_record_t;
 static void workflow_progress(jobcore_t *, uint64_t);
+static void workflow_reconcile(jobcore_t *);
 
 static int64_t current_time(void) { return (int64_t)time(NULL); }
 static uint64_t hash_name(const char *s) { uint64_t h = UINT64_C(1469598103934665603); while (*s) { h ^= (unsigned char)*s++; h *= UINT64_C(1099511628211); } return h ? h : 1; }
@@ -195,7 +196,7 @@ static void scheduler_iteration(jobcore_t *c) {
         }
         if (schedule.schedule_type == JOBCORE_SCHEDULE_INTERVAL && schedule.overlap_policy == JOBCORE_FIXED_DELAY && fire_at == INT64_MAX) {
             int64_t finished = latest_finished_for_schedule(c, schedule.schedule_id);
-            if (finished > 0) fire_at = finished;
+            if (finished > 0 && schedule.timezone_reference <= (uint64_t)(INT64_MAX - finished)) fire_at = finished + (int64_t)schedule.timezone_reference;
         }
         if (fire_at > now || fire_at == INT64_MAX) continue;
         {
@@ -265,7 +266,7 @@ jobdb_result_t jobcore_create_ex(jobdb_t *db, uint32_t workers, int64_t lease, u
 }
 jobdb_result_t jobcore_create(jobdb_t *db, uint32_t workers, int64_t lease, jobcore_t **out) { return jobcore_create_ex(db, workers, lease, 1000, out); }
 void jobcore_destroy(jobcore_t *c) { if (c) { (void)jobcore_stop(c); mutex_destroy(&c->mutex); free(c); } }
-jobdb_result_t jobcore_start(jobcore_t *c) { uint32_t i; if (!c) return JOBDB_ERR_INVALID_ARGUMENT; if (c->started) return JOBDB_ERR_INVALID_STATE; c->threads = (core_thread_t *)calloc(c->worker_count, sizeof *c->threads); if (!c->threads) return JOBDB_ERR_INTERNAL; c->stopping = 0;
+jobdb_result_t jobcore_start(jobcore_t *c) { uint32_t i; if (!c) return JOBDB_ERR_INVALID_ARGUMENT; if (c->started) return JOBDB_ERR_INVALID_STATE; c->threads = (core_thread_t *)calloc(c->worker_count, sizeof *c->threads); if (!c->threads) return JOBDB_ERR_INTERNAL; c->stopping = 0; workflow_reconcile(c);
     for (i = 0; i < c->worker_count; ++i) { struct { jobcore_t *core; uint32_t index; } *args = malloc(sizeof *args); if (!args) return JOBDB_ERR_INTERNAL; args->core = c; args->index = i + 1;
 #ifdef _WIN32
         c->threads[i] = CreateThread(NULL, 0, worker_main, args, 0, NULL); if (!c->threads[i]) { free(args); return JOBDB_ERR_INTERNAL; }
@@ -330,8 +331,22 @@ static void workflow_progress(jobcore_t *c, uint64_t completed_id) {
     for (i = 0; i < count; ++i) if (jobdb_record_get(c->db, WORKFLOW_NODE_RECORD_TYPE, ids[i], &r) == JOBDB_OK) { if (r.payload_size == sizeof current) { memcpy(&node, r.payload, sizeof node); if (node.execution_id == completed_id) current = node; } jobdb_record_free(&r); }
     if (!current.workflow_id) { free(ids); return; }
     for (i = 0; i < count; ++i) if (jobdb_record_get(c->db, WORKFLOW_NODE_RECORD_TYPE, ids[i], &r) == JOBDB_OK) {
-        if (r.payload_size == sizeof node) { int ready = 1, failed = 0; memcpy(&node, r.payload, sizeof node); for (j = 0; j < node.dependency_count; ++j) { jobdb_execution_state_t state; if (!workflow_state(c, node.dependencies[j], &state) || (state != JOBDB_EXEC_DONE && state != JOBDB_EXEC_FAILED && state != JOBDB_EXEC_DEAD && state != JOBDB_EXEC_CANCELLED)) ready = 0; if (state == JOBDB_EXEC_FAILED || state == JOBDB_EXEC_DEAD || state == JOBDB_EXEC_CANCELLED) failed = 1; } if (node.workflow_id == current.workflow_id && node.dependency_count && ready && node.policy != JOBCORE_DEP_BLOCK) { uint64_t revision; if (failed && node.policy == JOBCORE_DEP_CANCEL) (void)jobdb_execution_transition(c->db, node.execution_id, 1, JOBDB_EXEC_CANCELLED, &revision); else if (!failed || node.policy == JOBCORE_DEP_CONTINUE) (void)jobdb_execution_transition(c->db, node.execution_id, 1, JOBDB_EXEC_READY, &revision); } }
+        if (r.payload_size == sizeof node) { int ready = 1, failed = 0; memcpy(&node, r.payload, sizeof node); for (j = 0; j < node.dependency_count; ++j) { jobdb_execution_state_t state; if (!workflow_state(c, node.dependencies[j], &state) || (state != JOBDB_EXEC_DONE && state != JOBDB_EXEC_FAILED && state != JOBDB_EXEC_DEAD && state != JOBDB_EXEC_CANCELLED)) ready = 0; if (state == JOBDB_EXEC_FAILED || state == JOBDB_EXEC_DEAD || state == JOBDB_EXEC_CANCELLED) failed = 1; } if (node.workflow_id == current.workflow_id && node.dependency_count && ready && node.policy != JOBCORE_DEP_BLOCK) { uint64_t revision; if (failed && (node.policy == JOBCORE_DEP_CANCEL || node.policy == JOBCORE_DEP_FAIL_WORKFLOW)) (void)jobdb_execution_transition(c->db, node.execution_id, 1, JOBDB_EXEC_CANCELLED, &revision); else if (!failed || node.policy == JOBCORE_DEP_CONTINUE) (void)jobdb_execution_transition(c->db, node.execution_id, 1, JOBDB_EXEC_READY, &revision); } }
         jobdb_record_free(&r);
+    }
+    free(ids);
+}
+
+static void workflow_reconcile(jobcore_t *c) {
+    uint64_t *ids = NULL; size_t count = 0, i;
+    if (!load_all_record_ids(c, WORKFLOW_NODE_RECORD_TYPE, &ids, &count)) return;
+    for (i = 0; i < count; ++i) {
+        jobdb_record_t record = {0};
+        workflow_record_t node;
+        if (jobdb_record_get(c->db, WORKFLOW_NODE_RECORD_TYPE, ids[i], &record) == JOBDB_OK) {
+            if (record.payload_size == sizeof node) { memcpy(&node, record.payload, sizeof node); workflow_progress(c, node.execution_id); }
+            jobdb_record_free(&record);
+        }
     }
     free(ids);
 }
