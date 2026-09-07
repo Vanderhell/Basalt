@@ -42,6 +42,17 @@ public static class NativeMethods
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    public struct ScheduleView
+    {
+        public ulong ScheduleId, JobDefinitionId;
+        public uint ScheduleType, Enabled;
+        public ulong TimezoneReference;
+        public long StartAt, EndAt, LastFireAt, NextFireAt;
+        public ulong OccurrenceCount, MaxOccurrences, Revision;
+        public uint MisfirePolicy, OverlapPolicy;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     public struct ExecutionContext
     {
         public ulong ExecutionId;
@@ -114,4 +125,16 @@ public static class NativeMethods
     public static extern JobDbResult basalt_stats_get(nint db, out StatsView stats);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     public static extern JobDbResult basalt_db_health(nint db);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    public static extern JobDbResult basalt_schedule_create(nint core, ulong scheduleId, ulong jobType, uint scheduleType, long firstFireAt, long interval, uint intervalMode, ulong maxOccurrences, byte[]? payload, uint payloadSize, uint payloadVersion, string? cronExpression, string? timezone, uint misfirePolicy, uint overlapPolicy, uint catchUpMax);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    public static extern JobDbResult basalt_schedule_get(nint core, ulong scheduleId, out ScheduleView schedule);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    public static extern JobDbResult basalt_schedule_update(nint core, ref ScheduleView schedule, ulong expectedRevision);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    public static extern JobDbResult basalt_schedule_pause(nint core, ulong scheduleId, ulong expectedRevision);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    public static extern JobDbResult basalt_schedule_resume(nint core, ulong scheduleId, ulong expectedRevision);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    public static extern JobDbResult basalt_schedule_remove(nint core, ulong scheduleId, ulong expectedRevision);
 }

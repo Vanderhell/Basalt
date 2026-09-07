@@ -23,6 +23,14 @@ typedef struct basalt_stats_view {
     uint64_t submitted_total, started_total, completed_total, failed_total;
     uint64_t retried_total, cancelled_total, dead_total, recovered_total;
 } basalt_stats_view_t;
+typedef struct basalt_schedule_view {
+    uint64_t schedule_id, job_definition_id;
+    uint32_t schedule_type, enabled;
+    uint64_t timezone_reference;
+    int64_t start_at, end_at, last_fire_at, next_fire_at;
+    uint64_t occurrence_count, max_occurrences, revision;
+    uint32_t misfire_policy, overlap_policy;
+} basalt_schedule_view_t;
 
 uint32_t basalt_abi_version(void);
 jobdb_result_t basalt_db_create(const char *path, jobdb_t **out_db);
@@ -37,6 +45,12 @@ jobdb_result_t basalt_execution_cancel(jobdb_t *db, uint64_t execution_id, uint6
 jobdb_result_t basalt_execution_requeue(jobdb_t *db, uint64_t execution_id, uint64_t expected_revision);
 jobdb_result_t basalt_stats_get(jobdb_t *db, basalt_stats_view_t *out_stats);
 jobdb_result_t basalt_db_health(jobdb_t *db);
+jobdb_result_t basalt_schedule_create(jobcore_t *core, uint64_t schedule_id, uint64_t job_type, uint32_t schedule_type, int64_t first_fire_at, int64_t interval, uint32_t interval_mode, uint64_t max_occurrences, const void *payload, uint32_t payload_size, uint32_t payload_version, const char *cron_expression, const char *timezone, uint32_t misfire_policy, uint32_t overlap_policy, uint32_t catch_up_max);
+jobdb_result_t basalt_schedule_get(jobcore_t *core, uint64_t schedule_id, basalt_schedule_view_t *out_schedule);
+jobdb_result_t basalt_schedule_update(jobcore_t *core, const basalt_schedule_view_t *schedule, uint64_t expected_revision);
+jobdb_result_t basalt_schedule_pause(jobcore_t *core, uint64_t schedule_id, uint64_t expected_revision);
+jobdb_result_t basalt_schedule_resume(jobcore_t *core, uint64_t schedule_id, uint64_t expected_revision);
+jobdb_result_t basalt_schedule_remove(jobcore_t *core, uint64_t schedule_id, uint64_t expected_revision);
 jobdb_result_t basalt_core_create(jobdb_t *db, uint32_t workers, int64_t lease_duration, jobcore_t **out_core);
 jobdb_result_t basalt_core_create_ex(jobdb_t *db, uint32_t workers, int64_t lease_duration, uint32_t grace_ms, jobcore_t **out_core);
 void basalt_core_destroy(jobcore_t *core);

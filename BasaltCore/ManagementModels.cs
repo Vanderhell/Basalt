@@ -16,3 +16,10 @@ public sealed class BasaltStats
     public ulong SubmittedTotal { get; } public ulong StartedTotal { get; } public ulong CompletedTotal { get; } public ulong FailedTotal { get; }
     public ulong RetriedTotal { get; } public ulong CancelledTotal { get; } public ulong DeadTotal { get; } public ulong RecoveredTotal { get; }
 }
+
+public sealed class BasaltScheduleInfo
+{
+    public ulong ScheduleId { get; set; } public ulong JobDefinitionId { get; set; } public uint ScheduleType { get; set; } public bool Enabled { get; set; } public ulong TimezoneReference { get; set; }
+    public long StartAt { get; set; } public long EndAt { get; set; } public long LastFireAt { get; set; } public long NextFireAt { get; set; } public ulong OccurrenceCount { get; set; } public ulong MaxOccurrences { get; set; } public ulong Revision { get; set; }
+    public uint MisfirePolicy { get; set; } public uint OverlapPolicy { get; set; }
+}
