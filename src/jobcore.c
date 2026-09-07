@@ -118,7 +118,7 @@ static jobdb_result_t finalize_with_retry(jobdb_t *db,uint64_t id,const jobdb_wo
 #define jobdb_execution_complete(db,id,w,token) complete_with_retry((db),(id),(w),(token))
 static void process_one(jobcore_t *c, const jobdb_worker_id_t *worker) {
     jobdb_execution_t execution; jobdb_record_t record = {0}; core_handler_t handler = {0};
-    jobcore_execution_context_t context; heartbeat_t heartbeat; int64_t started_at = current_time();
+    jobcore_execution_context_t context; heartbeat_t heartbeat; int64_t started_at = current_time(); int missing_handler = 0;
     jobdb_result_t result = jobdb_claim_next(c->db, worker, started_at, c->lease_duration, &execution);
     if (result != JOBDB_OK) { sleep_ms(2); return; }
     result = jobdb_execution_start(c->db, execution.execution_id, worker, execution.fencing_token, (int64_t)time(NULL), &execution.revision);
@@ -134,10 +134,11 @@ static void process_one(jobcore_t *c, const jobdb_worker_id_t *worker) {
         uint64_t type; uint32_t version, size;
         memcpy(&type, record.payload, 8); memcpy(&version, record.payload + 8, 4); memcpy(&size, record.payload + 12, 4); context.payload_version = version;
         if (type != execution.job_definition_id || size != record.payload_size - PAYLOAD_HEADER_SIZE) result = JOBDB_ERR_CORRUPT;
-        else if (!handler.fn) result = JOBDB_ERR_NOT_FOUND;
+        else if (!handler.fn) { result = JOBDB_ERR_NOT_FOUND; missing_handler = 1; }
         else if (handler.fn(record.payload + PAYLOAD_HEADER_SIZE, size, version, &context, handler.data) != 0) result = JOBDB_ERR_INTERNAL;
     } else if (result == JOBDB_OK) result = JOBDB_ERR_CORRUPT;
     if (record.payload) jobdb_record_free(&record); heartbeat_stop(&heartbeat);
+    if (missing_handler) { (void)jobdb_execution_park(c->db, execution.execution_id, worker, execution.fencing_token, NULL); return; }
     if (result == JOBDB_OK) { if (jobdb_execution_complete(c->db, execution.execution_id, worker, execution.fencing_token) == JOBDB_OK) workflow_progress(c, execution.execution_id); }
     else { jobdb_record_t retry_record = {0}; retry_record_t policy = {0}; int has_retry = jobdb_record_get(c->db, RETRY_RECORD_TYPE, execution.execution_id, &retry_record) == JOBDB_OK && retry_record.payload_size == sizeof policy; if (has_retry) memcpy(&policy, retry_record.payload, sizeof policy); if (retry_record.payload) jobdb_record_free(&retry_record); if (has_retry && policy.policy != JOBCORE_RETRY_NONE && execution.attempt + 1u < policy.max_attempts) { int64_t eligible = current_time() + retry_delay(&policy, execution.attempt + 1u, execution.execution_id); jobdb_result_t retry_result = JOBDB_ERR_BUSY; unsigned retry_count; for (retry_count = 0; retry_count < 100 && retry_result == JOBDB_ERR_BUSY; ++retry_count) { retry_result = jobdb_execution_retry(c->db, execution.execution_id, worker, execution.fencing_token, eligible, NULL); if (retry_result == JOBDB_ERR_BUSY || retry_result == JOBDB_ERR_CONFLICT) sleep_ms(2); } } else { jobdb_execution_state_t final_state = has_retry && policy.policy != JOBCORE_RETRY_NONE ? JOBDB_EXEC_DEAD : JOBDB_EXEC_FAILED; (void)finalize_with_retry(c->db, execution.execution_id, worker, execution.fencing_token, final_state, 0, (int32_t)result); } }
 }
