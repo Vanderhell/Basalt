@@ -48,8 +48,8 @@ static void wait_occurrences(jobdb_t *db, uint64_t id, uint64_t wanted) {
 static uint64_t workflow_execution(jobdb_t *db, uint64_t workflow_id, uint64_t node_id) {
     uint64_t ids[128], id, stored_workflow, stored_node; size_t count = 0, i; jobdb_record_t record = {0};
     assert(jobdb_list_record_ids(db, 104, ids, 128, &count) == JOBDB_OK);
-    for (i = 0; i < count; ++i) if (jobdb_record_get(db, 104, ids[i], &record) == JOBDB_OK && record.payload_size >= 24) {
-        memcpy(&stored_workflow, record.payload, sizeof stored_workflow); memcpy(&id, record.payload + 8, sizeof id); memcpy(&stored_node, record.payload + 16, sizeof stored_node); jobdb_record_free(&record);
+    for (i = 0; i < count; ++i) if (jobdb_record_get(db, 104, ids[i], &record) == JOBDB_OK && record.payload_size >= 40) {
+        memcpy(&stored_workflow, record.payload + 8, sizeof stored_workflow); memcpy(&id, record.payload + 16, sizeof id); memcpy(&stored_node, record.payload + 24, sizeof stored_node); jobdb_record_free(&record);
         if (stored_workflow == workflow_id && stored_node == node_id) return id;
     }
     return 0;
@@ -93,6 +93,7 @@ int main(void) {
     workflow_nodes[1].node_id = 7002; workflow_nodes[1].job_type = 42; workflow_nodes[1].payload = "job"; workflow_nodes[1].payload_size = 3; workflow_nodes[1].payload_version = 7; workflow_nodes[1].dependency_count = 1; workflow_nodes[1].dependencies[0] = 7001;
     assert(jobcore_workflow_submit(core, 7000, workflow_nodes, 2, JOBCORE_DEP_CANCEL, now) == JOBDB_OK);
     workflow_root = workflow_execution(db, 7000, 7001); workflow_child = workflow_execution(db, 7000, 7002);
+    { uint64_t ids[128]; size_t n=0; jobdb_record_t wr={0}; assert(jobdb_list_record_ids(db,104,ids,128,&n)==JOBDB_OK && n>=2); assert(jobdb_record_get(db,104,ids[0],&wr)==JOBDB_OK && wr.payload_size==104); assert(wr.payload[0]=='W' && wr.payload[1]=='L' && wr.payload[2]=='F' && wr.payload[3]=='1'); jobdb_record_free(&wr); }
     { jobdb_execution_t workflow_first, workflow_second; assert(workflow_root && workflow_child); assert(jobdb_execution_get(db, workflow_root, &workflow_first) == JOBDB_OK && workflow_first.state == JOBDB_EXEC_READY); assert(jobdb_execution_get(db, workflow_child, &workflow_second) == JOBDB_OK && workflow_second.state == JOBDB_EXEC_BLOCKED); }
     assert(jobdb_get_stats(db, &stats_before) == JOBDB_OK);
     memcpy(cycle_nodes, workflow_nodes, sizeof cycle_nodes); cycle_nodes[0].node_id = 7101; cycle_nodes[0].dependency_count = 1; cycle_nodes[0].dependencies[0] = 7102; cycle_nodes[1].node_id = 7102; cycle_nodes[1].dependency_count = 1; cycle_nodes[1].dependencies[0] = 7101;
