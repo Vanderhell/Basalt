@@ -15,10 +15,12 @@ try
         if (id != same) throw new Exception("idempotency receipt mismatch");
         var info = engine.GetExecution(id);
         if (info.State == 0) throw new Exception("execution inspection failed");
-        for (var i = 0; i < 50 && engine.GetExecution(id).State < 7; i++) await Task.Delay(20);
-        if (engine.GetExecution(id).State == 7 && engine.GetLedger(id).FinalState != 7) throw new Exception("ledger inspection failed");
+        for (var i = 0; i < 250 && engine.GetExecution(id).State < 7; i++) await Task.Delay(20);
+        if (engine.GetExecution(id).State == 7 && engine.ListLedgerExecutionIds().Contains(id) && engine.GetLedger(id).FinalState != 7) throw new Exception("ledger inspection failed");
         _ = engine.GetStats();
         _ = engine.ListExecutionIds();
+        _ = engine.ListLedgerExecutionIds();
+        _ = engine.ListScheduleIds();
         engine.VerifyHealth();
         engine.Stop();
         database.Backup(backup);

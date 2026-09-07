@@ -45,6 +45,7 @@ static void workflow_reconcile(jobcore_t *);
 static void core_put_u64le(uint8_t *, uint64_t);
 
 static int64_t current_time(void) { return (int64_t)time(NULL); }
+jobdb_t *jobcore_database(jobcore_t *c) { return c ? c->db : NULL; }
 static uint64_t hash_name(const char *s) { uint64_t h = UINT64_C(1469598103934665603); while (*s) { h ^= (unsigned char)*s++; h *= UINT64_C(1099511628211); } return h ? h : 1; }
 static core_handler_t *find_handler(jobcore_t *c, uint64_t type) { uint32_t i; for (i = 0; i < c->handler_count; ++i) if (c->handlers[i].type == type) return &c->handlers[i]; return NULL; }
 static void make_worker(jobcore_t *c, jobdb_worker_id_t *id, uint32_t index) { memset(id, 0, sizeof *id); memcpy(id->bytes, &c->identity, sizeof c->identity); memcpy(id->bytes + 8, &index, sizeof index); }
