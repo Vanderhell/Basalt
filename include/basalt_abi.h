@@ -32,7 +32,8 @@ typedef struct basalt_ledger_view {
 typedef struct basalt_schedule_view {
     uint64_t schedule_id, job_definition_id;
     uint32_t schedule_type, enabled;
-    uint64_t timezone_reference;
+    uint64_t timezone_reference, interval;
+    uint32_t interval_mode, catch_up_max;
     int64_t start_at, end_at, last_fire_at, next_fire_at;
     uint64_t occurrence_count, max_occurrences, revision;
     uint32_t misfire_policy, overlap_policy;

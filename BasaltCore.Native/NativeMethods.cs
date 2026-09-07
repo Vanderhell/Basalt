@@ -54,7 +54,8 @@ public static class NativeMethods
     {
         public ulong ScheduleId, JobDefinitionId;
         public uint ScheduleType, Enabled;
-        public ulong TimezoneReference;
+        public ulong TimezoneReference, Interval;
+        public uint IntervalMode, CatchUpMax;
         public long StartAt, EndAt, LastFireAt, NextFireAt;
         public ulong OccurrenceCount, MaxOccurrences, Revision;
         public uint MisfirePolicy, OverlapPolicy;

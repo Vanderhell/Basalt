@@ -212,13 +212,13 @@ static void scheduler_iteration(jobcore_t *c) {
             }
             jobdb_record_free(&cron_record); continue;
         }
-        if (schedule.schedule_type == JOBCORE_SCHEDULE_INTERVAL && schedule.overlap_policy == JOBCORE_FIXED_DELAY && fire_at == INT64_MAX) {
+        if (schedule.schedule_type == JOBCORE_SCHEDULE_INTERVAL && schedule.interval_mode == JOBCORE_FIXED_DELAY && fire_at == INT64_MAX) {
             int64_t finished = latest_finished_for_schedule(c, schedule.schedule_id);
-            if (finished > 0 && schedule.timezone_reference <= (uint64_t)(INT64_MAX - finished)) fire_at = finished + (int64_t)schedule.timezone_reference;
+            if (finished > 0 && schedule.interval <= (uint64_t)(INT64_MAX - finished)) fire_at = finished + (int64_t)schedule.interval;
         }
         if (fire_at > now || fire_at == INT64_MAX) continue;
         {
-            int64_t cadence = schedule.schedule_type == JOBCORE_SCHEDULE_INTERVAL && schedule.timezone_reference ? (int64_t)schedule.timezone_reference : 60;
+            int64_t cadence = schedule.schedule_type == JOBCORE_SCHEDULE_INTERVAL && schedule.interval ? (int64_t)schedule.interval : 60;
             int64_t missed = now > fire_at ? (now - fire_at) / cadence : 0;
             int active = schedule_active(c, schedule.schedule_id);
             if (active && (schedule.overlap_policy == JOBCORE_OVERLAP_SKIP || schedule.overlap_policy == JOBCORE_OVERLAP_QUEUE_ONE)) {
@@ -235,7 +235,7 @@ static void scheduler_iteration(jobcore_t *c) {
         execution_id = allocate_execution_id(c); if (!execution_id) continue;
         next_fire = INT64_MAX;
         if (schedule.schedule_type == JOBCORE_SCHEDULE_INTERVAL) {
-            next_fire = schedule.overlap_policy == JOBCORE_FIXED_DELAY ? INT64_MAX : fire_at + (int64_t)schedule.timezone_reference;
+            next_fire = schedule.interval_mode == JOBCORE_FIXED_DELAY ? INT64_MAX : fire_at + (int64_t)schedule.interval;
             if (schedule.max_occurrences && schedule.occurrence_count + 1 >= schedule.max_occurrences) next_fire = INT64_MAX;
             if (schedule.end_at && next_fire > schedule.end_at) next_fire = INT64_MAX;
         }
@@ -326,7 +326,7 @@ jobdb_result_t jobcore_schedule_create(jobcore_t *c, const jobcore_schedule_spec
     if (spec->type == JOBCORE_SCHEDULE_CRON && (!spec->cron_expression || !spec->timezone)) return JOBDB_ERR_INVALID_ARGUMENT;
     if (spec->type == JOBCORE_SCHEDULE_INTERVAL && (spec->interval <= 0 || (spec->interval_mode != JOBCORE_FIXED_RATE && spec->interval_mode != JOBCORE_FIXED_DELAY))) return JOBDB_ERR_INVALID_ARGUMENT;
     if (spec->misfire_policy > JOBCORE_MISFIRE_CATCH_UP_ALL || spec->overlap_policy > JOBCORE_OVERLAP_QUEUE_ALL) return JOBDB_ERR_INVALID_ARGUMENT;
-    memset(&schedule, 0, sizeof schedule); schedule.schedule_id = spec->schedule_id; schedule.job_definition_id = spec->job_type; schedule.schedule_type = (uint32_t)spec->type; schedule.enabled = 1; schedule.start_at = spec->first_fire_at; schedule.next_fire_at = spec->first_fire_at; schedule.max_occurrences = spec->max_occurrences; schedule.timezone_reference = (uint64_t)spec->interval; schedule.overlap_policy = spec->overlap_policy ? (uint32_t)spec->overlap_policy : (uint32_t)spec->interval_mode; schedule.misfire_policy = (uint32_t)spec->misfire_policy;
+    memset(&schedule, 0, sizeof schedule); schedule.schedule_id = spec->schedule_id; schedule.job_definition_id = spec->job_type; schedule.schedule_type = (uint32_t)spec->type; schedule.enabled = 1; schedule.start_at = spec->first_fire_at; schedule.next_fire_at = spec->first_fire_at; schedule.max_occurrences = spec->max_occurrences; schedule.timezone_reference = 0; schedule.interval = (uint64_t)spec->interval; schedule.interval_mode = (uint32_t)spec->interval_mode; schedule.catch_up_max = spec->catch_up_max; schedule.overlap_policy = (uint32_t)spec->overlap_policy; schedule.misfire_policy = (uint32_t)spec->misfire_policy;
     if (spec->payload_size > UINT32_MAX - PAYLOAD_HEADER_SIZE) return JOBDB_ERR_LIMIT;
     payload_record = (uint8_t *)malloc(PAYLOAD_HEADER_SIZE + (size_t)spec->payload_size); if (!payload_record) return JOBDB_ERR_INTERNAL;
     memcpy(payload_record, &spec->job_type, 8); memcpy(payload_record + 8, &spec->payload_version, 4); memcpy(payload_record + 12, &spec->payload_size, 4); if (spec->payload_size) memcpy(payload_record + PAYLOAD_HEADER_SIZE, spec->payload, spec->payload_size);

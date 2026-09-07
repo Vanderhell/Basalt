@@ -45,6 +45,9 @@ typedef struct jobdb_schedule {
     uint32_t schedule_type;
     uint32_t enabled;
     uint64_t timezone_reference;
+    uint64_t interval;
+    uint32_t interval_mode;
+    uint32_t catch_up_max;
     int64_t start_at, end_at, last_fire_at, next_fire_at;
     uint64_t occurrence_count, max_occurrences;
     uint32_t misfire_policy, overlap_policy;

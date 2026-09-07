@@ -34,7 +34,7 @@ public sealed class BasaltLedgerEntry
 
 public sealed class BasaltScheduleInfo
 {
-    public ulong ScheduleId { get; set; } public ulong JobDefinitionId { get; set; } public uint ScheduleType { get; set; } public bool Enabled { get; set; } public ulong TimezoneReference { get; set; }
+    public ulong ScheduleId { get; set; } public ulong JobDefinitionId { get; set; } public uint ScheduleType { get; set; } public bool Enabled { get; set; } public ulong TimezoneReference { get; set; } public ulong Interval { get; set; } public uint IntervalMode { get; set; } public uint CatchUpMax { get; set; }
     public long StartAt { get; set; } public long EndAt { get; set; } public long LastFireAt { get; set; } public long NextFireAt { get; set; } public ulong OccurrenceCount { get; set; } public ulong MaxOccurrences { get; set; } public ulong Revision { get; set; }
     public uint MisfirePolicy { get; set; } public uint OverlapPolicy { get; set; }
 }
