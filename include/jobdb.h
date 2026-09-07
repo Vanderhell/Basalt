@@ -100,6 +100,9 @@ jobdb_result_t jobdb_create(const char *path, jobdb_t **out_db);
 jobdb_result_t jobdb_open(const char *path, jobdb_t **out_db);
 void jobdb_close(jobdb_t *db);
 jobdb_result_t jobdb_verify(const char *path);
+jobdb_result_t jobdb_health(jobdb_t *db);
+jobdb_result_t jobdb_backup(jobdb_t *db, const char *target_path);
+jobdb_result_t jobdb_restore(const char *source_path, const char *target_path);
 jobdb_result_t jobdb_lock_acquire(jobdb_t *db, uint32_t timeout_ms, jobdb_lock_t **out_lock);
 void jobdb_lock_release(jobdb_lock_t *lock);
 jobdb_result_t jobdb_record_create(jobdb_t *db, uint32_t record_type, uint64_t record_id,

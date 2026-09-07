@@ -79,6 +79,25 @@ public sealed class BasaltEngine : IDisposable
         return Task.Run(() => { cancellationToken.ThrowIfCancellationRequested(); BasaltDatabase.Check(NativeMethods.basalt_core_enqueue(_core, jobType, bytes, (uint)bytes.Length, payloadVersion, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), maxAttempts, out ulong id)); return id; }, cancellationToken);
     }
 
+    public BasaltExecutionInfo GetExecution(ulong executionId)
+    {
+        ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_execution_get(_database.Handle, executionId, out var value));
+        return new BasaltExecutionInfo(value.ExecutionId, value.JobDefinitionId, value.ScheduleId, value.WorkflowId, value.State, value.CreatedAt, value.EligibleAt, value.StartedAt, value.FinishedAt, value.Priority, value.Attempt, value.MaxAttempts, value.Revision, value.LeaseExpiresAt, value.FencingToken);
+    }
+
+    public IReadOnlyList<ulong> ListExecutionIds()
+    {
+        ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_execution_list(_database.Handle, null, UIntPtr.Zero, out var needed));
+        if (needed.ToUInt64() > int.MaxValue) throw new BasaltException(JobDbResult.Limit);
+        var ids = new ulong[(int)needed.ToUInt64()]; BasaltDatabase.Check(NativeMethods.basalt_execution_list(_database.Handle, ids, (UIntPtr)ids.Length, out var count));
+        if ((ulong)ids.Length != count.ToUInt64()) Array.Resize(ref ids, (int)count.ToUInt64()); return ids;
+    }
+
+    public void Cancel(ulong executionId, ulong expectedRevision) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_execution_cancel(_database.Handle, executionId, expectedRevision)); }
+    public void Requeue(ulong executionId, ulong expectedRevision) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_execution_requeue(_database.Handle, executionId, expectedRevision)); }
+    public BasaltStats GetStats() { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_stats_get(_database.Handle, out var s)); return new BasaltStats(s.SubmittedTotal, s.StartedTotal, s.CompletedTotal, s.FailedTotal, s.RetriedTotal, s.CancelledTotal, s.DeadTotal, s.RecoveredTotal); }
+    public void VerifyHealth() { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_db_health(_database.Handle)); }
+
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;

@@ -24,6 +24,24 @@ public enum JobDbResult
 public static class NativeMethods
 {
     [StructLayout(LayoutKind.Sequential)]
+    public struct ExecutionView
+    {
+        public ulong ExecutionId, JobDefinitionId, ScheduleId, WorkflowId;
+        public uint State, PayloadVersion, Attempt, MaxAttempts;
+        public long CreatedAt, EligibleAt, StartedAt, FinishedAt, LeaseExpiresAt;
+        public int Priority;
+        public ulong Revision, FencingToken;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)] public byte[] WorkerInstanceId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct StatsView
+    {
+        public ulong SubmittedTotal, StartedTotal, CompletedTotal, FailedTotal;
+        public ulong RetriedTotal, CancelledTotal, DeadTotal, RecoveredTotal;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     public struct ExecutionContext
     {
         public ulong ExecutionId;
@@ -76,4 +94,21 @@ public static class NativeMethods
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
     public static extern JobDbResult basalt_db_verify(string path);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    public static extern JobDbResult basalt_db_backup(nint db, string targetPath);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    public static extern JobDbResult basalt_db_restore(string sourcePath, string targetPath);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    public static extern JobDbResult basalt_execution_get(nint db, ulong executionId, out ExecutionView execution);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    public static extern JobDbResult basalt_execution_list(nint db, ulong[]? ids, UIntPtr capacity, out UIntPtr count);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    public static extern JobDbResult basalt_execution_cancel(nint db, ulong executionId, ulong expectedRevision);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    public static extern JobDbResult basalt_execution_requeue(nint db, ulong executionId, ulong expectedRevision);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    public static extern JobDbResult basalt_stats_get(nint db, out StatsView stats);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    public static extern JobDbResult basalt_db_health(nint db);
 }

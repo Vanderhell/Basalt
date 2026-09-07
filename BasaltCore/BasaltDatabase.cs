@@ -42,6 +42,8 @@ public sealed class BasaltDatabase : IDisposable
     }
 
     public static void Verify(string path) { Check(NativeMethods.basalt_db_verify(path)); }
+    public void Backup(string targetPath) { ThrowIfDisposed(); Check(NativeMethods.basalt_db_backup(Handle, targetPath)); }
+    public static void Restore(string sourcePath, string targetPath) { Check(NativeMethods.basalt_db_restore(sourcePath, targetPath)); }
     public void Dispose() { if (Interlocked.Exchange(ref _disposed, 1) == 0) _handle.Dispose(); GC.SuppressFinalize(this); }
     private void ThrowIfDisposed() { if (Volatile.Read(ref _disposed) != 0) throw new ObjectDisposedException(nameof(BasaltDatabase)); }
     internal static void Check(JobDbResult result) { if (result != JobDbResult.Ok) throw new BasaltException(result); }
