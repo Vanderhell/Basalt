@@ -8,6 +8,6 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Basalt" Version="1.0.0-rc.3" />
+    <PackageReference Include="Basalt" Version="1.0.0-rc.4" />
   </ItemGroup>
 </Project>

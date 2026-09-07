@@ -13,6 +13,17 @@ try
         var id = await engine.EnqueueAsync("consumer-idempotency", jobType, new byte[] { 1, 2, 3 }, 1, 1);
         var same = await engine.EnqueueAsync("consumer-idempotency", jobType, new byte[] { 1, 2, 3 }, 1, 1);
         if (id != same) throw new Exception("idempotency receipt mismatch");
+        _ = await engine.EnqueueRetryAsync(jobType, new byte[] { 4 }, 1, 2, 1);
+        engine.CreateSchedule(9001, jobType, 2, DateTimeOffset.UtcNow.AddMinutes(5), TimeSpan.Zero, 1, 1, new byte[] { 5 });
+        _ = engine.GetSchedule(9001);
+        _ = engine.ListScheduleIds();
+        var scheduleRevision = engine.GetSchedule(9001).Revision;
+        engine.PauseSchedule(9001, scheduleRevision);
+        engine.ResumeSchedule(9001, engine.GetSchedule(9001).Revision);
+        engine.RemoveSchedule(9001, engine.GetSchedule(9001).Revision);
+        engine.SubmitWorkflow(9100, new[] { new BasaltWorkflowNode { NodeId = 1, JobType = jobType, Payload = new byte[] { 6 } } });
+        _ = engine.GetWorkflow(9100);
+        engine.CancelWorkflow(9100);
         var info = engine.GetExecution(id);
         if (info.State == 0) throw new Exception("execution inspection failed");
         for (var i = 0; i < 250 && engine.GetExecution(id).State < 7; i++) await Task.Delay(20);

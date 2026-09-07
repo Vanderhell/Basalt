@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <PackageId>Basalt</PackageId>
-    <Version>1.0.0-rc.3</Version>
+    <Version>1.0.0-rc.4</Version>
     <Authors>Vanderhell</Authors>
     <Description>Local durable background jobs, scheduling and workflow engine for .NET applications.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
