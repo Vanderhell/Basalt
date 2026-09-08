@@ -86,6 +86,8 @@ public static class NativeMethods
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     public static extern JobDbResult basalt_core_create_ex(nint db, uint workers, long leaseDuration, uint graceMilliseconds, out nint core);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    public static extern JobDbResult basalt_core_create_storage_v1(nint storage, uint workers, long leaseDuration, uint graceMilliseconds, out nint core);
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     public static extern void basalt_core_destroy(nint core);

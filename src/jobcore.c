@@ -61,6 +61,7 @@ static void core_put_u64le(uint8_t *, uint64_t);
 static int64_t current_time(void) { return (int64_t)time(NULL); }
 jobdb_t *jobcore_database(jobcore_t *c) { return c ? c->embedded_db : NULL; }
 basalt_storage_t *jobcore_storage(jobcore_t *c) { return c ? c->storage : NULL; }
+static int64_t core_now(jobcore_t *c) { int64_t now; return c && (basalt_storage_capabilities(c->storage) & BASALT_STORAGE_CAP_PROVIDER_CLOCK) && basalt_storage_utc_now(c->storage,&now)==JOBDB_OK ? now : current_time(); }
 static uint64_t hash_name(const char *s) { uint64_t h = UINT64_C(1469598103934665603); while (*s) { h ^= (unsigned char)*s++; h *= UINT64_C(1099511628211); } return h ? h : 1; }
 static core_handler_t *find_handler(jobcore_t *c, uint64_t type) { uint32_t i; for (i = 0; i < c->handler_count; ++i) if (c->handlers[i].type == type) return &c->handlers[i]; return NULL; }
 static void make_worker(jobcore_t *c, jobdb_worker_id_t *id, uint32_t index) { memset(id, 0, sizeof *id); memcpy(id->bytes, &c->identity, sizeof c->identity); memcpy(id->bytes + 8, &index, sizeof index); }
@@ -103,7 +104,7 @@ static void *heartbeat_main(void *argument)
             waited += step;
         }
         if (!heartbeat->stop) {
-            jobdb_result_t renew = basalt_storage_renew_lease(heartbeat->core->storage, heartbeat->execution_id, &heartbeat->worker, heartbeat->token, current_time() + heartbeat->core->lease_duration);
+            jobdb_result_t renew = basalt_storage_renew_lease(heartbeat->core->storage, heartbeat->execution_id, &heartbeat->worker, heartbeat->token, core_now(heartbeat->core) + heartbeat->core->lease_duration);
             if (renew == JOBDB_ERR_STALE_LEASE || renew == JOBDB_ERR_NOT_FOUND || renew == JOBDB_ERR_INVALID_STATE)
                 heartbeat->cancellation_requested = 1;
         }
@@ -140,10 +141,10 @@ static jobdb_result_t finalize_with_retry(basalt_storage_t *db,uint64_t id,const
 #define basalt_storage_execution_complete(db,id,w,token) complete_with_retry((db),(id),(w),(token))
 static void process_one(jobcore_t *c, const jobdb_worker_id_t *worker) {
     jobdb_execution_t execution; jobdb_record_t record = {0}; core_handler_t handler = {0};
-    jobcore_execution_context_t context; heartbeat_t heartbeat; int64_t started_at = current_time(); int missing_handler = 0;
+    jobcore_execution_context_t context; heartbeat_t heartbeat; int64_t started_at = core_now(c); int missing_handler = 0;
     jobdb_result_t result = basalt_storage_claim_next(c->storage, worker, started_at, c->lease_duration, &execution);
     if (result != JOBDB_OK) { sleep_ms(2); return; }
-    result = basalt_storage_execution_start(c->storage, execution.execution_id, worker, execution.fencing_token, (int64_t)time(NULL), &execution.revision);
+    result = basalt_storage_execution_start(c->storage, execution.execution_id, worker, execution.fencing_token, core_now(c), &execution.revision);
     if (result != JOBDB_OK) return;
     mutex_lock(&c->mutex); { core_handler_t *registered = find_handler(c, execution.job_definition_id); if (registered) handler = *registered; } mutex_unlock(&c->mutex);
     memset(&heartbeat, 0, sizeof heartbeat); heartbeat.core = c; heartbeat.worker = *worker; heartbeat.execution_id = execution.execution_id; heartbeat.token = execution.fencing_token;
@@ -162,7 +163,7 @@ static void process_one(jobcore_t *c, const jobdb_worker_id_t *worker) {
     if (record.payload) basalt_storage_record_free(c->storage,&record); heartbeat_stop(&heartbeat);
     if (missing_handler) { (void)basalt_storage_execution_park(c->storage, execution.execution_id, worker, execution.fencing_token, NULL); return; }
     if (result == JOBDB_OK) { if (basalt_storage_execution_complete(c->storage, execution.execution_id, worker, execution.fencing_token) == JOBDB_OK) workflow_progress(c, execution.execution_id); }
-    else { jobdb_record_t retry_record = {0}; retry_record_t policy = {0}; int has_retry = basalt_storage_record_get(c->storage, RETRY_RECORD_TYPE, execution.execution_id, &retry_record) == JOBDB_OK && retry_decode(retry_record.payload, retry_record.payload_size, &policy) == JOBDB_OK; if (retry_record.payload) basalt_storage_record_free(c->storage,&retry_record); if (has_retry && policy.policy != JOBCORE_RETRY_NONE && execution.attempt + 1u < policy.max_attempts) { int64_t eligible = current_time() + retry_delay(&policy, execution.attempt + 1u, execution.execution_id); jobdb_result_t retry_result = JOBDB_ERR_BUSY; unsigned retry_count; for (retry_count = 0; retry_count < 100 && retry_result == JOBDB_ERR_BUSY; ++retry_count) { retry_result = basalt_storage_execution_retry(c->storage, execution.execution_id, worker, execution.fencing_token, eligible, NULL); if (retry_result == JOBDB_ERR_BUSY || retry_result == JOBDB_ERR_CONFLICT) sleep_ms(2); } } else { jobdb_execution_state_t final_state = has_retry && policy.policy != JOBCORE_RETRY_NONE ? JOBDB_EXEC_DEAD : JOBDB_EXEC_FAILED; if (finalize_with_retry(c->storage, execution.execution_id, worker, execution.fencing_token, final_state, 0, (int32_t)result) == JOBDB_OK) workflow_progress(c, execution.execution_id); } }
+    else { jobdb_record_t retry_record = {0}; retry_record_t policy = {0}; int has_retry = basalt_storage_record_get(c->storage, RETRY_RECORD_TYPE, execution.execution_id, &retry_record) == JOBDB_OK && retry_decode(retry_record.payload, retry_record.payload_size, &policy) == JOBDB_OK; if (retry_record.payload) basalt_storage_record_free(c->storage,&retry_record); if (has_retry && policy.policy != JOBCORE_RETRY_NONE && execution.attempt + 1u < policy.max_attempts) { int64_t eligible = core_now(c) + retry_delay(&policy, execution.attempt + 1u, execution.execution_id); jobdb_result_t retry_result = JOBDB_ERR_BUSY; unsigned retry_count; for (retry_count = 0; retry_count < 100 && retry_result == JOBDB_ERR_BUSY; ++retry_count) { retry_result = basalt_storage_execution_retry(c->storage, execution.execution_id, worker, execution.fencing_token, eligible, NULL); if (retry_result == JOBDB_ERR_BUSY || retry_result == JOBDB_ERR_CONFLICT) sleep_ms(2); } } else { jobdb_execution_state_t final_state = has_retry && policy.policy != JOBCORE_RETRY_NONE ? JOBDB_EXEC_DEAD : JOBDB_EXEC_FAILED; if (finalize_with_retry(c->storage, execution.execution_id, worker, execution.fencing_token, final_state, 0, (int32_t)result) == JOBDB_OK) workflow_progress(c, execution.execution_id); } }
 }
 
 static uint64_t allocate_execution_id(jobcore_t *c) {
@@ -217,7 +218,7 @@ static void discard_scheduled_fire(jobcore_t *c, jobdb_schedule_t *schedule, int
 }
 
 static void scheduler_iteration(jobcore_t *c) {
-    uint64_t *ids = NULL; size_t count = 0, i; int64_t now = current_time(); jobdb_schedule_t schedule;
+    uint64_t *ids = NULL; size_t count = 0, i; int64_t now = core_now(c); jobdb_schedule_t schedule;
     if (!load_all_record_ids(c, 2, &ids, &count)) return;
     for (i = 0; i < count && !c->stopping; ++i) {
         int64_t fire_at, next_fire; uint64_t execution_id, queued_id;

@@ -19,17 +19,17 @@ public sealed class BasaltStats
 
 public sealed class BasaltLedgerEntry
 {
-    public ulong ExecutionId { get; internal set; }
-    public ulong JobDefinitionId { get; internal set; }
-    public ulong ScheduleId { get; internal set; }
-    public ulong WorkflowId { get; internal set; }
-    public long StartedAt { get; internal set; }
-    public long FinishedAt { get; internal set; }
-    public long Duration { get; internal set; }
-    public uint Attempt { get; internal set; }
-    public uint FinalState { get; internal set; }
-    public int ResultCode { get; internal set; }
-    public int ErrorCode { get; internal set; }
+    public ulong ExecutionId { get; set; }
+    public ulong JobDefinitionId { get; set; }
+    public ulong ScheduleId { get; set; }
+    public ulong WorkflowId { get; set; }
+    public long StartedAt { get; set; }
+    public long FinishedAt { get; set; }
+    public long Duration { get; set; }
+    public uint Attempt { get; set; }
+    public uint FinalState { get; set; }
+    public int ResultCode { get; set; }
+    public int ErrorCode { get; set; }
 }
 
 public sealed class BasaltScheduleInfo

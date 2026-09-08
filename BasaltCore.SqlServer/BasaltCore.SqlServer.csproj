@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <PackageId>Basalt.SqlServer</PackageId>
+    <Version>1.0.0-rc.4</Version>
+    <Description>SQL Server storage provider for the Basalt durable job engine.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\BasaltCore\BasaltCore.csproj" />
+    <ProjectReference Include="..\BasaltCore.Native\BasaltCore.Native.csproj" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.2" />
+  </ItemGroup>
+</Project>

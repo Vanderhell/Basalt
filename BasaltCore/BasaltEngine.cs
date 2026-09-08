@@ -6,11 +6,13 @@ namespace BasaltCore;
 
 public sealed class BasaltEngine : IDisposable
 {
-    private readonly BasaltDatabase _database;
+    private readonly BasaltDatabase? _database;
+    private readonly BasaltStorage? _storage;
     private readonly BasaltCoreHandle _core;
     private readonly ConcurrentDictionary<ulong, NativeMethods.JobHandler> _handlers = new();
     private readonly object _lifecycle = new();
     private readonly bool _databaseRetained;
+    private readonly bool _storageRetained;
     private int _disposed;
 
     public BasaltEngine(BasaltDatabase database, uint workers = 1, long leaseDuration = 30)
@@ -28,6 +30,14 @@ public sealed class BasaltEngine : IDisposable
         database.Retain(out _databaseRetained);
         try { BasaltDatabase.Check(NativeMethods.basalt_core_create_ex(database.Handle, options.WorkerCount, options.LeaseDurationSeconds, options.StopGraceMilliseconds, out var core)); _core = new BasaltCoreHandle(core); }
         catch { if (_databaseRetained) database.Release(); throw; }
+    }
+
+    public BasaltEngine(BasaltStorage storage, BasaltOptions? options = null)
+    {
+        _storage=storage??throw new ArgumentNullException(nameof(storage));options??=new BasaltOptions();
+        storage.RetainManaged();_storageRetained=true;
+        try{BasaltDatabase.Check(NativeMethods.basalt_core_create_storage_v1(storage.DangerousHandle,options.WorkerCount,options.LeaseDurationSeconds,options.StopGraceMilliseconds,out var core));_core=new BasaltCoreHandle(core);}
+        catch{storage.ReleaseManaged();throw;}
     }
 
     public void RegisterRawHandler(ulong jobType, Func<ReadOnlyMemory<byte>, uint, int> handler)
@@ -102,34 +112,36 @@ public sealed class BasaltEngine : IDisposable
 
     public BasaltExecutionInfo GetExecution(ulong executionId)
     {
-        ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_execution_get(_database.Handle, executionId, out var value));
+        ThrowIfDisposed(); if(_database==null)return _storage!.GetExecution(executionId); BasaltDatabase.Check(NativeMethods.basalt_execution_get(_database.Handle, executionId, out var value));
         return new BasaltExecutionInfo(value.ExecutionId, value.JobDefinitionId, value.ScheduleId, value.WorkflowId, value.State, value.CreatedAt, value.EligibleAt, value.StartedAt, value.FinishedAt, value.Priority, value.Attempt, value.MaxAttempts, value.Revision, value.LeaseExpiresAt, value.FencingToken);
     }
 
     public IReadOnlyList<ulong> ListExecutionIds()
     {
-        ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_execution_list(_database.Handle, null, UIntPtr.Zero, out var needed));
+        ThrowIfDisposed(); if(_database==null)throw new NotSupportedException("Use the storage-neutral management API with this provider."); BasaltDatabase.Check(NativeMethods.basalt_execution_list(_database.Handle, null, UIntPtr.Zero, out var needed));
         if (needed.ToUInt64() > int.MaxValue) throw new BasaltException(JobDbResult.Limit);
         var ids = new ulong[(int)needed.ToUInt64()]; BasaltDatabase.Check(NativeMethods.basalt_execution_list(_database.Handle, ids, (UIntPtr)ids.Length, out var count));
         if ((ulong)ids.Length != count.ToUInt64()) Array.Resize(ref ids, (int)count.ToUInt64()); return ids;
     }
 
-    public void Cancel(ulong executionId, ulong expectedRevision) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_execution_cancel(_database.Handle, executionId, expectedRevision)); }
-    public void Requeue(ulong executionId, ulong expectedRevision) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_execution_requeue(_database.Handle, executionId, expectedRevision)); }
-    public BasaltStats GetStats() { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_stats_get(_database.Handle, out var s)); return new BasaltStats(s.SubmittedTotal, s.StartedTotal, s.CompletedTotal, s.FailedTotal, s.RetriedTotal, s.CancelledTotal, s.DeadTotal, s.RecoveredTotal); }
+    public void Cancel(ulong executionId, ulong expectedRevision) { ThrowIfDisposed(); if(_database==null){_storage!.Cancel(executionId,expectedRevision);return;} BasaltDatabase.Check(NativeMethods.basalt_execution_cancel(_database.Handle, executionId, expectedRevision)); }
+    public void Cancel(ulong executionId){var current=GetExecution(executionId);Cancel(executionId,current.Revision);}
+    public void Requeue(ulong executionId, ulong expectedRevision) { ThrowIfDisposed(); if(_database==null){_storage!.Requeue(executionId,expectedRevision);return;} BasaltDatabase.Check(NativeMethods.basalt_execution_requeue(_database.Handle, executionId, expectedRevision)); }
+    public void Requeue(ulong executionId){var current=GetExecution(executionId);Requeue(executionId,current.Revision);}
+    public BasaltStats GetStats() { ThrowIfDisposed(); if(_database==null)return _storage!.GetStats(); BasaltDatabase.Check(NativeMethods.basalt_stats_get(_database.Handle, out var s)); return new BasaltStats(s.SubmittedTotal, s.StartedTotal, s.CompletedTotal, s.FailedTotal, s.RetriedTotal, s.CancelledTotal, s.DeadTotal, s.RecoveredTotal); }
     public BasaltLedgerEntry GetLedger(ulong executionId)
     {
-        ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_ledger_get(_database.Handle, executionId, out var e));
+        ThrowIfDisposed(); if(_database==null)return _storage!.GetLedger(executionId); BasaltDatabase.Check(NativeMethods.basalt_ledger_get(_database.Handle, executionId, out var e));
         return new BasaltLedgerEntry { ExecutionId=e.ExecutionId, JobDefinitionId=e.JobDefinitionId, ScheduleId=e.ScheduleId, WorkflowId=e.WorkflowId, StartedAt=e.StartedAt, FinishedAt=e.FinishedAt, Duration=e.Duration, Attempt=e.Attempt, FinalState=e.FinalState, ResultCode=e.ResultCode, ErrorCode=e.ErrorCode };
     }
     public IReadOnlyList<ulong> ListLedgerExecutionIds()
     {
-        ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_ledger_list(_database.Handle, null, UIntPtr.Zero, out var needed));
+        ThrowIfDisposed(); if(_database==null)throw new NotSupportedException("Use paginated storage management for this provider."); BasaltDatabase.Check(NativeMethods.basalt_ledger_list(_database.Handle, null, UIntPtr.Zero, out var needed));
         if (needed.ToUInt64() > int.MaxValue) throw new BasaltException(JobDbResult.Limit);
         var ids = new ulong[(int)needed.ToUInt64()]; BasaltDatabase.Check(NativeMethods.basalt_ledger_list(_database.Handle, ids, (UIntPtr)ids.Length, out var count));
         if ((ulong)ids.Length != count.ToUInt64()) Array.Resize(ref ids, (int)count.ToUInt64()); return ids;
     }
-    public void VerifyHealth() { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_db_health(_database.Handle)); }
+    public void VerifyHealth() { ThrowIfDisposed(); if(_database==null){_storage!.VerifyHealth();return;} BasaltDatabase.Check(NativeMethods.basalt_db_health(_database.Handle)); }
 
     public void CreateSchedule(ulong scheduleId, ulong jobType, uint scheduleType, DateTimeOffset firstFireAt, TimeSpan interval, uint intervalMode, ulong maxOccurrences, ReadOnlyMemory<byte> payload, uint payloadVersion = 1, string? cronExpression = null, string? timezone = null, uint misfirePolicy = 2, uint overlapPolicy = 1, uint catchUpMax = 0)
     { ThrowIfDisposed(); var bytes=payload.ToArray(); BasaltDatabase.Check(NativeMethods.basalt_schedule_create(_core.DangerousGetHandle(),scheduleId,jobType,scheduleType,firstFireAt.ToUnixTimeSeconds(),checked((long)interval.TotalSeconds),intervalMode,maxOccurrences,bytes,(uint)bytes.Length,payloadVersion,cronExpression,timezone,misfirePolicy,overlapPolicy,catchUpMax)); }
@@ -155,7 +167,7 @@ public sealed class BasaltEngine : IDisposable
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        lock (_lifecycle) { _core.Dispose(); _handlers.Clear(); if (_databaseRetained) _database.Release(); } GC.SuppressFinalize(this);
+        lock (_lifecycle) { _core.Dispose(); _handlers.Clear(); if (_databaseRetained) _database!.Release(); if(_storageRetained)_storage!.ReleaseManaged(); } GC.SuppressFinalize(this);
     }
     public BasaltWorkflowStatus GetWorkflow(ulong workflowId) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_workflow_get(_core.DangerousGetHandle(),workflowId,out var s)); return new BasaltWorkflowStatus{WorkflowId=s.WorkflowId,NodeCount=s.NodeCount,ReadyCount=s.ReadyCount,BlockedCount=s.BlockedCount,RunningCount=s.RunningCount,TerminalCount=s.TerminalCount,FailedCount=s.FailedCount,CancelledCount=s.CancelledCount,CancelRequested=s.CancelRequested!=0}; }
     public void CancelWorkflow(ulong workflowId) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_workflow_cancel(_core.DangerousGetHandle(),workflowId)); }
