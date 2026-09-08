@@ -160,3 +160,16 @@ public static class NativeMethods
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     public static extern JobDbResult basalt_schedule_remove(nint core, ulong scheduleId, ulong expectedRevision);
 }
+
+public sealed class BasaltCoreHandle : SafeHandle
+{
+    public BasaltCoreHandle() : base(IntPtr.Zero, true) { }
+    public BasaltCoreHandle(IntPtr value) : this() { SetHandle(value); }
+    public override bool IsInvalid => handle == IntPtr.Zero || handle == new IntPtr(-1);
+    protected override bool ReleaseHandle()
+    {
+        NativeMethods.basalt_core_stop(handle);
+        NativeMethods.basalt_core_destroy(handle);
+        return true;
+    }
+}

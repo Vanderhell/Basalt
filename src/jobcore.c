@@ -36,7 +36,7 @@ static unsigned process_id(void) { return (unsigned)getpid(); }
 #define MAX_HANDLERS 128u
 
 typedef struct { uint64_t type; jobcore_handler_fn fn; void *data; } core_handler_t;
-typedef struct { jobcore_t *core; jobdb_worker_id_t worker; uint64_t execution_id; uint64_t token; volatile int stop; core_thread_t thread; int started; } heartbeat_t;
+typedef struct { jobcore_t *core; jobdb_worker_id_t worker; uint64_t execution_id; uint64_t token; volatile int stop; volatile int cancellation_requested; core_thread_t thread; int started; } heartbeat_t;
 struct jobcore { jobdb_t *db; uint32_t worker_count; int64_t lease_duration; uint32_t grace_ms; volatile int stopping; int started; uint64_t identity; core_mutex_t mutex; uint32_t handler_count; core_handler_t handlers[MAX_HANDLERS]; core_thread_t *threads; core_thread_t scheduler; int scheduler_started; };
 typedef struct { uint32_t policy, max_attempts, jitter, reserved; int64_t initial_delay, max_delay; double backoff_factor; } retry_record_t;
 typedef struct { uint64_t workflow_id, execution_id, node_id; uint32_t policy, dependency_count; uint64_t dependencies[8]; } workflow_record_t;
@@ -93,13 +93,19 @@ static void *heartbeat_main(void *argument)
     heartbeat_t *heartbeat = (heartbeat_t *)argument;
     unsigned interval = (unsigned)(heartbeat->core->lease_duration > 1 ? heartbeat->core->lease_duration * 333u : 100u);
     while (!heartbeat->stop) {
+        if (heartbeat->core->stopping) heartbeat->cancellation_requested = 1;
         unsigned waited = 0;
         while (!heartbeat->stop && waited < interval) {
+            if (heartbeat->core->stopping) heartbeat->cancellation_requested = 1;
             unsigned step = interval - waited > 10u ? 10u : interval - waited;
             sleep_ms(step);
             waited += step;
         }
-        if (!heartbeat->stop) (void)jobdb_renew_lease(heartbeat->core->db, heartbeat->execution_id, &heartbeat->worker, heartbeat->token, current_time() + heartbeat->core->lease_duration);
+        if (!heartbeat->stop) {
+            jobdb_result_t renew = jobdb_renew_lease(heartbeat->core->db, heartbeat->execution_id, &heartbeat->worker, heartbeat->token, current_time() + heartbeat->core->lease_duration);
+            if (renew == JOBDB_ERR_STALE_LEASE || renew == JOBDB_ERR_NOT_FOUND || renew == JOBDB_ERR_INVALID_STATE)
+                heartbeat->cancellation_requested = 1;
+        }
     }
 #ifdef _WIN32
     return 0;
@@ -139,8 +145,8 @@ static void process_one(jobcore_t *c, const jobdb_worker_id_t *worker) {
     result = jobdb_execution_start(c->db, execution.execution_id, worker, execution.fencing_token, (int64_t)time(NULL), &execution.revision);
     if (result != JOBDB_OK) return;
     mutex_lock(&c->mutex); { core_handler_t *registered = find_handler(c, execution.job_definition_id); if (registered) handler = *registered; } mutex_unlock(&c->mutex);
-    memset(&context, 0, sizeof context); context.execution_id = execution.execution_id; context.job_type = execution.job_definition_id; context.attempt = execution.attempt; context.fencing_token = execution.fencing_token; context.worker = *worker; context.cancellation_requested = &c->stopping;
     memset(&heartbeat, 0, sizeof heartbeat); heartbeat.core = c; heartbeat.worker = *worker; heartbeat.execution_id = execution.execution_id; heartbeat.token = execution.fencing_token;
+    memset(&context, 0, sizeof context); context.execution_id = execution.execution_id; context.job_type = execution.job_definition_id; context.attempt = execution.attempt; context.fencing_token = execution.fencing_token; context.worker = *worker; context.cancellation_requested = &heartbeat.cancellation_requested;
     (void)heartbeat_start(&heartbeat);
     result = jobdb_record_get(c->db, PAYLOAD_RECORD_TYPE, execution.execution_id, &record);
     if (result == JOBDB_ERR_NOT_FOUND && execution.schedule_id != 0)
@@ -328,21 +334,32 @@ jobdb_result_t jobcore_create_ex(jobdb_t *db, uint32_t workers, int64_t lease, u
 }
 jobdb_result_t jobcore_create(jobdb_t *db, uint32_t workers, int64_t lease, jobcore_t **out) { return jobcore_create_ex(db, workers, lease, 1000, out); }
 void jobcore_destroy(jobcore_t *c) { if (c) { (void)jobcore_stop(c); mutex_destroy(&c->mutex); free(c); } }
-jobdb_result_t jobcore_start(jobcore_t *c) { uint32_t i; if (!c) return JOBDB_ERR_INVALID_ARGUMENT; if (c->started) return JOBDB_ERR_INVALID_STATE; c->threads = (core_thread_t *)calloc(c->worker_count, sizeof *c->threads); if (!c->threads) return JOBDB_ERR_INTERNAL; c->stopping = 0; workflow_reconcile(c);
-    for (i = 0; i < c->worker_count; ++i) { struct { jobcore_t *core; uint32_t index; } *args = malloc(sizeof *args); if (!args) return JOBDB_ERR_INTERNAL; args->core = c; args->index = i + 1;
+jobdb_result_t jobcore_start(jobcore_t *c) { uint32_t i; if (!c) return JOBDB_ERR_INVALID_ARGUMENT; if (c->started) return JOBDB_OK; c->threads = (core_thread_t *)calloc(c->worker_count, sizeof *c->threads); if (!c->threads) return JOBDB_ERR_INTERNAL; c->stopping = 0; workflow_reconcile(c);
+    for (i = 0; i < c->worker_count; ++i) { struct { jobcore_t *core; uint32_t index; } *args = malloc(sizeof *args); if (!args) goto start_failed; args->core = c; args->index = i + 1;
 #ifdef _WIN32
-        c->threads[i] = CreateThread(NULL, 0, worker_main, args, 0, NULL); if (!c->threads[i]) { free(args); return JOBDB_ERR_INTERNAL; }
+        c->threads[i] = CreateThread(NULL, 0, worker_main, args, 0, NULL); if (!c->threads[i]) { free(args); goto start_failed; }
 #else
-        if (pthread_create(&c->threads[i], NULL, worker_main, args) != 0) { free(args); return JOBDB_ERR_INTERNAL; }
+        if (pthread_create(&c->threads[i], NULL, worker_main, args) != 0) { free(args); goto start_failed; }
 #endif
     }
 #ifdef _WIN32
     c->scheduler = CreateThread(NULL, 0, scheduler_main, c, 0, NULL);
-    if (!c->scheduler) { c->stopping = 1; return JOBDB_ERR_INTERNAL; }
+    if (!c->scheduler) goto start_failed;
 #else
-    if (pthread_create(&c->scheduler, NULL, scheduler_main, c) != 0) { c->stopping = 1; return JOBDB_ERR_INTERNAL; }
+    if (pthread_create(&c->scheduler, NULL, scheduler_main, c) != 0) goto start_failed;
 #endif
     c->scheduler_started = 1; c->started = 1; return JOBDB_OK;
+start_failed:
+    c->stopping = 1;
+    while (i > 0) {
+        --i;
+#ifdef _WIN32
+        (void)WaitForSingleObject(c->threads[i], INFINITE); CloseHandle(c->threads[i]);
+#else
+        (void)pthread_join(c->threads[i], NULL);
+#endif
+    }
+    free(c->threads); c->threads = NULL; return JOBDB_ERR_INTERNAL;
 }
 jobdb_result_t jobcore_stop_with_grace(jobcore_t *c, uint32_t grace_ms) { uint32_t i; if (!c) return JOBDB_ERR_INVALID_ARGUMENT; if (!c->started) return JOBDB_OK; c->stopping = 1;
 #ifdef _WIN32

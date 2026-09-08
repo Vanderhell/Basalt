@@ -23,6 +23,11 @@ public sealed class BasaltDatabase : IDisposable
 
     private BasaltDatabase(BasaltDbHandle handle) { _handle = handle; }
     internal IntPtr Handle { get { ThrowIfDisposed(); return _handle.DangerousGetHandle(); } }
+    internal void Retain(out bool retained)
+    {
+        ThrowIfDisposed(); retained = false; _handle.DangerousAddRef(ref retained);
+    }
+    internal void Release() { _handle.DangerousRelease(); }
 
     public static BasaltDatabase Create(string path) { return OpenCore(path, false); }
     public static BasaltDatabase Open(string path) { return OpenCore(path, true); }
