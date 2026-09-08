@@ -66,6 +66,9 @@ jobdb_result_t basalt_schedule_resume(jobcore_t *core, uint64_t schedule_id, uin
 jobdb_result_t basalt_schedule_remove(jobcore_t *core, uint64_t schedule_id, uint64_t expected_revision);
 jobdb_result_t basalt_core_create(jobdb_t *db, uint32_t workers, int64_t lease_duration, jobcore_t **out_core);
 jobdb_result_t basalt_core_create_ex(jobdb_t *db, uint32_t workers, int64_t lease_duration, uint32_t grace_ms, jobcore_t **out_core);
+jobdb_result_t basalt_storage_create_v1(const basalt_storage_vtable_v1 *vtable, void *context, basalt_storage_t **out_storage);
+void basalt_storage_destroy(basalt_storage_t *storage);
+jobdb_result_t basalt_core_create_storage_v1(basalt_storage_t *storage, uint32_t workers, int64_t lease_duration, uint32_t grace_ms, jobcore_t **out_core);
 void basalt_core_destroy(jobcore_t *core);
 jobdb_result_t basalt_core_start(jobcore_t *core);
 jobdb_result_t basalt_core_stop(jobcore_t *core);
