@@ -1,0 +1,70 @@
+namespace BasaltCore;
+
+public static class Basalt
+{
+    public static BasaltApplication Create(Action<BasaltConfiguration> configure)
+    {if(configure==null)throw new ArgumentNullException(nameof(configure));var c=new BasaltConfiguration();configure(c);return c.Build();}
+}
+
+public sealed class BasaltConfiguration
+{
+    private string? _embeddedPath; private Func<BasaltStorage>? _storage; private readonly BasaltOptions _engine=new();
+    public BasaltConfiguration UseEmbedded(string path){if(string.IsNullOrWhiteSpace(path))throw new ArgumentException("A database path is required.",nameof(path));EnsureUnset();_embeddedPath=path;return this;}
+    public BasaltConfiguration UseStorage(Func<BasaltStorage> storageFactory){EnsureUnset();_storage=storageFactory??throw new ArgumentNullException(nameof(storageFactory));return this;}
+    public BasaltConfiguration ConfigureEngine(Action<BasaltOptions> configure){configure?.Invoke(_engine);return this;}
+    private void EnsureUnset(){if(_embeddedPath!=null||_storage!=null)throw new InvalidOperationException("Configure exactly one Basalt storage provider.");}
+    internal BasaltApplication Build(){if(_embeddedPath!=null){var db=BasaltDatabase.OpenOrCreate(_embeddedPath);try{return new BasaltApplication(new BasaltEngine(db,_engine),db);}catch{db.Dispose();throw;}}if(_storage!=null){var s=_storage();try{return new BasaltApplication(new BasaltEngine(s,_engine),s);}catch{s.Dispose();throw;}}throw new InvalidOperationException("Configure UseEmbedded or a storage provider.");}
+}
+
+public sealed class BasaltApplication : IDisposable
+{
+    internal interface IRegistration{string Key{get;}ulong Type{get;}byte[] Serialize(object value);uint Version{get;}}
+    private sealed class Registration<T> : IRegistration{internal readonly IJobSerializer<T> Serializer;public string Key{get;}public ulong Type{get;}public uint Version=>Serializer.Version;internal Registration(string key,IJobSerializer<T>s){Key=key;Type=JobKey.Hash(key);Serializer=s;}public byte[] Serialize(object value)=>Serializer.Serialize((T)value);}
+    private readonly BasaltEngine _engine; private readonly IDisposable _ownedStorage; private readonly Dictionary<Type,IRegistration> _registrations=new(); private int _disposed;
+    internal BasaltApplication(BasaltEngine engine,IDisposable ownedStorage){_engine=engine;_ownedStorage=ownedStorage;}
+    public void RegisterHandler<T>(string stableKey,Func<T,JobContext,CancellationToken,Task> handler,IJobSerializer<T>? serializer=null){ThrowIfDisposed();serializer??=new DataContractJobSerializer<T>();_engine.RegisterHandler(stableKey,handler,serializer);_registrations[typeof(T)]=new Registration<T>(stableKey,serializer);}
+    public Task StartAsync(CancellationToken cancellationToken=default){ThrowIfDisposed();return _engine.StartAsync(cancellationToken);}
+    public Task StopAsync(CancellationToken cancellationToken=default){ThrowIfDisposed();return _engine.StopAsync(cancellationToken);}
+    public Task<ulong> EnqueueAsync<T>(string stableKey,T job,EnqueueOptions? options=null,CancellationToken cancellationToken=default){ThrowIfDisposed();options??=new EnqueueOptions();options.Validate();IJobSerializer<T> serializer=_registrations.TryGetValue(typeof(T),out var r)&&r is Registration<T> typed?typed.Serializer:new DataContractJobSerializer<T>();byte[] payload=serializer.Serialize(job!);ulong type=JobKey.Hash(stableKey);if(options.Retry.Policy!=RetryPolicy.None){if(options.IdempotencyKey!=null)throw new NotSupportedException("Combined retry metadata and idempotency requires the v2 enqueue receipt operation.");return _engine.EnqueueRetryAsync(type,payload,(uint)options.Retry.Policy,options.Retry.MaxAttempts,(long)options.Retry.InitialDelay.TotalSeconds,(long)options.Retry.MaxDelay.TotalSeconds,options.Retry.BackoffFactor,(uint)options.Retry.Jitter.TotalSeconds,serializer.Version,cancellationToken);}if(options.IdempotencyKey!=null)return _engine.EnqueueAsync(options.IdempotencyKey,type,payload,serializer.Version,options.Retry.MaxAttempts,cancellationToken);return _engine.EnqueueAsync(type,payload,serializer.Version,options.Retry.MaxAttempts,cancellationToken);}
+    public Task ScheduleAsync<T>(string stableScheduleKey,T job,Action<ScheduleBuilder> configure,CancellationToken cancellationToken=default){ThrowIfDisposed();cancellationToken.ThrowIfCancellationRequested();if(!_registrations.TryGetValue(typeof(T),out var registration))throw new InvalidOperationException($"Register a stable handler and serializer for {typeof(T).Name} before scheduling it.");var b=new ScheduleBuilder();configure?.Invoke(b);b.Validate();byte[] payload=registration.Serialize(job!);_engine.CreateSchedule(JobKey.Hash("schedule:"+stableScheduleKey),registration.Type,(uint)b.Type,b.FirstFireAt,b.Interval,(uint)b.IntervalMode,b.MaxOccurrences,payload,registration.Version,b.CronExpression,b.TimeZoneId,(uint)b.MisfirePolicy,(uint)b.OverlapPolicy,b.CatchUpMax);return Task.CompletedTask;}
+    public WorkflowBuilder Workflow(string stableWorkflowKey){ThrowIfDisposed();return new WorkflowBuilder(this,stableWorkflowKey);}
+    internal IRegistration RegistrationFor(Type type)=>_registrations.TryGetValue(type,out var r)?r:throw new InvalidOperationException($"Register a handler for {type.Name} before adding it to a workflow.");
+    internal void Submit(string key,List<WorkflowBuilder.Node> nodes,DependencyPolicy policy){var raw=new List<BasaltWorkflowNode>(nodes.Count);foreach(var n in nodes){var r=RegistrationFor(n.Value.GetType());raw.Add(new BasaltWorkflowNode{NodeId=n.Id,JobType=r.Type,Payload=r.Serialize(n.Value),PayloadVersion=r.Version,Dependencies=n.Dependencies.ToArray()});}_engine.SubmitWorkflow(JobKey.Hash("workflow:"+key),raw,(BasaltDependencyPolicy)policy);}
+    public BasaltExecutionInfo GetExecution(ulong id)=>_engine.GetExecution(id);public BasaltStats GetStats()=>_engine.GetStats();public BasaltLedgerEntry GetLedger(ulong id)=>_engine.GetLedger(id);public void Cancel(ulong id)=>_engine.Cancel(id);public void Requeue(ulong id)=>_engine.Requeue(id);public BasaltScheduleInfo GetSchedule(ulong id)=>_engine.GetSchedule(id); public BasaltWorkflowStatus GetWorkflow(ulong id)=>_engine.GetWorkflow(id);public void VerifyHealth()=>_engine.VerifyHealth();
+    public void Dispose(){if(Interlocked.Exchange(ref _disposed,1)!=0)return;_engine.Dispose();_ownedStorage.Dispose();GC.SuppressFinalize(this);}private void ThrowIfDisposed(){if(Volatile.Read(ref _disposed)!=0)throw new ObjectDisposedException(nameof(BasaltApplication));}
+}
+
+public enum RetryPolicy:uint{None=0,Fixed=1,Linear=2,Exponential=3,ExponentialWithJitter=4}
+public sealed class RetryOptions
+{
+    public RetryPolicy Policy{get;}public uint MaxAttempts{get;}public TimeSpan InitialDelay{get;}public TimeSpan MaxDelay{get;}public double BackoffFactor{get;}public TimeSpan Jitter{get;}
+    private RetryOptions(RetryPolicy policy,uint attempts,TimeSpan delay,TimeSpan max,double factor,TimeSpan jitter){Policy=policy;MaxAttempts=attempts;InitialDelay=delay;MaxDelay=max;BackoffFactor=factor;Jitter=jitter;Validate();}
+    public static RetryOptions None{get;}=new(RetryPolicy.None,1,TimeSpan.Zero,TimeSpan.Zero,1,TimeSpan.Zero);
+    public static RetryOptions Fixed(uint attempts,TimeSpan delay)=>new(RetryPolicy.Fixed,attempts,delay,delay,1,TimeSpan.Zero);
+    public static RetryOptions Linear(uint attempts,TimeSpan delay,TimeSpan? max=null)=>new(RetryPolicy.Linear,attempts,delay,max??TimeSpan.Zero,1,TimeSpan.Zero);
+    public static RetryOptions Exponential(uint attempts,TimeSpan delay,TimeSpan? max=null,double factor=2)=>new(RetryPolicy.Exponential,attempts,delay,max??TimeSpan.Zero,factor,TimeSpan.Zero);
+    public static RetryOptions ExponentialWithJitter(uint attempts,TimeSpan delay,TimeSpan jitter,TimeSpan? max=null,double factor=2)=>new(RetryPolicy.ExponentialWithJitter,attempts,delay,max??TimeSpan.Zero,factor,jitter);
+    internal void Validate(){if(!Enum.IsDefined(typeof(RetryPolicy),Policy)||MaxAttempts==0||InitialDelay<TimeSpan.Zero||MaxDelay<TimeSpan.Zero||Jitter<TimeSpan.Zero||Jitter>TimeSpan.FromDays(1)||double.IsNaN(BackoffFactor)||BackoffFactor<1)throw new ArgumentOutOfRangeException(nameof(RetryOptions));}
+}
+public sealed class EnqueueOptions{public RetryOptions Retry{get;set;}=RetryOptions.None;public string? IdempotencyKey{get;set;}internal void Validate(){Retry=(Retry??throw new ArgumentNullException(nameof(Retry))).AlsoValidate();if(IdempotencyKey!=null&&string.IsNullOrWhiteSpace(IdempotencyKey))throw new ArgumentException("IdempotencyKey cannot be blank.");}}
+internal static class RetryValidation{internal static RetryOptions AlsoValidate(this RetryOptions value){value.Validate();return value;}}
+
+public enum ScheduleType:uint{Immediate=1,Delayed=2,Absolute=3,Interval=4,Cron=5} public enum IntervalMode:uint{FixedRate=1,FixedDelay=2} public enum MisfirePolicy:uint{Skip=1,RunOnce=2,RunLast=3,CatchUpAll=4} public enum OverlapPolicy:uint{Allow=1,Skip=2,QueueOne=3,QueueAll=4}
+public sealed class ScheduleBuilder
+{
+    internal ScheduleType Type{get;private set;}=ScheduleType.Immediate;internal DateTimeOffset FirstFireAt{get;private set;}=DateTimeOffset.UtcNow;internal TimeSpan Interval{get;private set;}internal IntervalMode IntervalMode{get;private set;}=IntervalMode.FixedRate;internal ulong MaxOccurrences{get;private set;}internal string? CronExpression{get;private set;}internal string? TimeZoneId{get;private set;}internal MisfirePolicy MisfirePolicy{get;private set;}=MisfirePolicy.RunOnce;internal OverlapPolicy OverlapPolicy{get;private set;}=OverlapPolicy.Allow;internal uint CatchUpMax{get;private set;}
+    public ScheduleBuilder OnceAt(DateTimeOffset at){Type=ScheduleType.Absolute;FirstFireAt=at;return this;}public ScheduleBuilder Delay(TimeSpan delay){if(delay<TimeSpan.Zero)throw new ArgumentOutOfRangeException(nameof(delay));Type=ScheduleType.Delayed;FirstFireAt=DateTimeOffset.UtcNow+delay;return this;}public ScheduleBuilder Every(TimeSpan interval,IntervalMode mode=IntervalMode.FixedRate){Type=ScheduleType.Interval;Interval=interval;IntervalMode=mode;FirstFireAt=DateTimeOffset.UtcNow+interval;return this;}public ScheduleBuilder Cron(string expression){Type=ScheduleType.Cron;CronExpression=expression;return this;}public ScheduleBuilder DailyAt(int hour,int minute){if(hour<0||hour>23||minute<0||minute>59)throw new ArgumentOutOfRangeException();return Cron($"{minute} {hour} * * *");}public ScheduleBuilder InTimeZone(string id){TimeZoneInfo.FindSystemTimeZoneById(id);TimeZoneId=id;return this;}public ScheduleBuilder OnMisfire(MisfirePolicy value){MisfirePolicy=value;return this;}public ScheduleBuilder OnOverlap(OverlapPolicy value){OverlapPolicy=value;return this;}public ScheduleBuilder WithCatchUpMax(uint value){CatchUpMax=value;return this;}public ScheduleBuilder WithMaxOccurrences(ulong value){MaxOccurrences=value;return this;}
+    internal void Validate(){if(Type==ScheduleType.Interval&&Interval<=TimeSpan.Zero)throw new ArgumentOutOfRangeException(nameof(Interval));if(Type==ScheduleType.Cron&&(string.IsNullOrWhiteSpace(CronExpression)||string.IsNullOrWhiteSpace(TimeZoneId)))throw new InvalidOperationException("Cron/calendar schedules require an explicit expression and time zone.");if(!Enum.IsDefined(typeof(MisfirePolicy),MisfirePolicy)||!Enum.IsDefined(typeof(OverlapPolicy),OverlapPolicy))throw new ArgumentOutOfRangeException();}
+}
+
+public enum DependencyPolicy:uint{Block=1,Cancel=2,Continue=3,FailWorkflow=4}
+public sealed class WorkflowBuilder
+{
+    internal sealed class Node{internal string Name="";internal ulong Id;internal object Value=null!;internal List<ulong> Dependencies=new();}
+    private readonly BasaltApplication _owner;private readonly string _key;private readonly List<Node> _nodes=new();private Node? _last;private DependencyPolicy _policy=DependencyPolicy.Block;
+    internal WorkflowBuilder(BasaltApplication owner,string key){if(string.IsNullOrWhiteSpace(key))throw new ArgumentException("A stable workflow key is required.",nameof(key));_owner=owner;_key=key;}
+    public WorkflowBuilder Add<T>(string name,T job){return AddCore(name,job!,Array.Empty<string>());}public WorkflowBuilder Then<T>(string name,T job){if(_last==null)throw new InvalidOperationException("Then requires a preceding node.");return AddCore(name,job!,new[]{NameFor(_last.Id)});}public WorkflowBuilder AddAfter<T>(string name,T job,params string[] dependencies)=>AddCore(name,job!,dependencies);public WorkflowBuilder OnDependencyFailure(DependencyPolicy policy){_policy=policy;return this;}
+    private WorkflowBuilder AddCore(string name,object value,IEnumerable<string> dependencies){if(value==null)throw new ArgumentNullException(nameof(value));_owner.RegistrationFor(value.GetType());ulong id=JobKey.Hash("node:"+_key+":"+name);if(_nodes.Any(n=>n.Id==id))throw new ArgumentException("Workflow node names must be unique.",nameof(name));var node=new Node{Name=name,Id=id,Value=value};foreach(string d in dependencies){ulong dep=JobKey.Hash("node:"+_key+":"+d);if(!_nodes.Any(n=>n.Id==dep))throw new ArgumentException("Dependencies must reference an earlier named node.",nameof(dependencies));node.Dependencies.Add(dep);}_nodes.Add(node);_last=node;return this;}
+    private string NameFor(ulong id)=>_nodes.First(n=>n.Id==id).Name;
+    public Task SubmitAsync(CancellationToken cancellationToken=default){cancellationToken.ThrowIfCancellationRequested();if(_nodes.Count==0)throw new InvalidOperationException("A workflow needs at least one node.");_owner.Submit(_key,_nodes,_policy);return Task.CompletedTask;}
+}
