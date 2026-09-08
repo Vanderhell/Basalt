@@ -200,6 +200,12 @@ jobdb_result_t jobdb_schedule_try_fire(jobdb_t *db, uint64_t schedule_id,
                                        int64_t expected_next_fire_at,
                                        uint64_t execution_id, int64_t fire_at,
                                        int64_t next_fire_at);
+jobdb_result_t jobdb_schedule_try_fire_state(jobdb_t *db, uint64_t schedule_id,
+                                              uint64_t expected_revision,
+                                              int64_t expected_next_fire_at,
+                                              uint64_t execution_id, int64_t fire_at,
+                                              int64_t next_fire_at,
+                                              jobdb_execution_state_t initial_state);
 jobdb_result_t jobdb_get_stats(jobdb_t *db, jobdb_stats_t *out_stats);
 jobdb_result_t jobdb_ledger_append(jobdb_t *db, const jobdb_ledger_entry_t *entry);
 jobdb_result_t jobdb_ledger_get(jobdb_t *db, uint64_t execution_id,

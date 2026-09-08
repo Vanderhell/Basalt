@@ -54,6 +54,7 @@ static uint64_t workflow_execution(jobdb_t *db, uint64_t workflow_id, uint64_t n
     }
     return 0;
 }
+static void wait_not_blocked(jobdb_t *db, uint64_t id) { jobdb_execution_t e; unsigned i; for (i=0;i<1000;++i) { if (jobdb_execution_get(db,id,&e)==JOBDB_OK && e.state!=JOBDB_EXEC_BLOCKED) return; pause_ms(10); } assert(0 && "workflow child remained blocked"); }
 
 int main(void) {
     jobdb_t *db = NULL;
@@ -65,7 +66,7 @@ int main(void) {
     int64_t next_fire;
     jobcore_workflow_node_t workflow_nodes[2], cycle_nodes[2];
     jobdb_stats_t stats_before, stats_after;
-    uint64_t workflow_root = 0, workflow_child = 0;
+    uint64_t workflow_root = 0, workflow_child = 0, success_child = 0, recovery_child_block = 0, recovery_child_continue = 0, recovery_child_fail = 0;
     assert(jobcore_cron_next_fire("*/15 * * * *", "UTC", now, &next_fire) == JOBDB_OK);
     assert(next_fire > now && next_fire % 900 == 0);
     assert(jobcore_cron_next_fire("0 2 * * *", "Europe/Bratislava", now, &next_fire) == JOBDB_OK);
@@ -100,11 +101,14 @@ int main(void) {
     assert(jobcore_workflow_submit(core, 7100, cycle_nodes, 2, JOBCORE_DEP_BLOCK, now) == JOBDB_ERR_INVALID_ARGUMENT);
     assert(jobdb_get_stats(db, &stats_after) == JOBDB_OK && stats_after.submitted_total == stats_before.submitted_total);
     assert(jobdb_execution_finalize_unleased(db, workflow_root, 1, JOBDB_EXEC_CANCELLED, 0, 0) == JOBDB_OK);
+    { uint64_t root; jobdb_execution_t child; jobcore_dependency_policy_t policies[3]={JOBCORE_DEP_BLOCK,JOBCORE_DEP_CONTINUE,JOBCORE_DEP_FAIL_WORKFLOW}; uint64_t workflows[3]={7300,7400,7500}, roots[3]={8203,8307,8411}, child_nodes[3]={8204,8308,8412}; uint64_t *children[3]={&recovery_child_block,&recovery_child_continue,&recovery_child_fail}; size_t k; for(k=0;k<3;++k){ workflow_nodes[0].node_id=roots[k]; workflow_nodes[0].dependency_count=0; workflow_nodes[1].node_id=child_nodes[k]; workflow_nodes[1].dependencies[0]=roots[k]; assert(jobcore_workflow_submit(core,workflows[k],workflow_nodes,2,policies[k],now)==JOBDB_OK); root=workflow_execution(db,workflows[k],roots[k]); *children[k]=workflow_execution(db,workflows[k],child_nodes[k]); assert(root&&*children[k]); assert(jobdb_execution_finalize_unleased(db,root,1,JOBDB_EXEC_CANCELLED,0,0)==JOBDB_OK); assert(jobdb_execution_get(db,*children[k],&child)==JOBDB_OK&&child.state==JOBDB_EXEC_BLOCKED); } workflow_nodes[0].node_id=8101; workflow_nodes[0].dependency_count=0; workflow_nodes[1].node_id=8102; workflow_nodes[1].dependencies[0]=8101; assert(jobcore_workflow_submit(core,7200,workflow_nodes,2,JOBCORE_DEP_BLOCK,now)==JOBDB_OK); success_child=workflow_execution(db,7200,8102); assert(success_child); }
     assert(jobcore_start(core) == JOBDB_OK);
     wait_state(db, workflow_child, JOBDB_EXEC_CANCELLED);
+    wait_not_blocked(db,success_child); { jobdb_execution_t e; assert(jobdb_execution_get(db,recovery_child_block,&e)==JOBDB_OK&&e.state==JOBDB_EXEC_BLOCKED); }
+    wait_not_blocked(db,recovery_child_continue); wait_state(db,recovery_child_fail,JOBDB_EXEC_CANCELLED);
      wait_state(db, id, JOBDB_EXEC_DONE);
      wait_state(db, missing, JOBDB_EXEC_PAUSED);
-     { jobdb_execution_t parked; assert(jobdb_execution_get(db, missing, &parked) == JOBDB_OK); assert(jobdb_execution_resume_paused(db, missing, parked.revision, NULL) == JOBDB_OK); assert(jobdb_execution_get(db, missing, &parked) == JOBDB_OK && parked.state == JOBDB_EXEC_READY); }
+     { jobdb_execution_t parked; jobdb_result_t resume=JOBDB_ERR_BUSY; unsigned retry; assert(jobdb_execution_get(db, missing, &parked) == JOBDB_OK); for(retry=0;retry<1000&&resume==JOBDB_ERR_BUSY;++retry){ resume=jobdb_execution_resume_paused(db,missing,parked.revision,NULL); if(resume==JOBDB_ERR_BUSY)pause_ms(2); } assert(resume==JOBDB_OK); assert(jobdb_execution_get(db, missing, &parked) == JOBDB_OK && parked.state == JOBDB_EXEC_READY); }
      { jobdb_ledger_entry_t ledger; jobdb_execution_t completed; assert(jobdb_ledger_get(db, id, &ledger) == JOBDB_OK && ledger.final_state == JOBDB_EXEC_DONE); assert(jobdb_execution_get(db, id, &completed) == JOBDB_OK); assert(jobdb_execution_requeue_admin(db, id, completed.revision, NULL) == JOBDB_OK); assert(jobdb_execution_get(db, id, &completed) == JOBDB_OK && completed.state == JOBDB_EXEC_READY); assert(jobdb_ledger_get(db, id, &ledger) == JOBDB_OK && ledger.final_state == JOBDB_EXEC_DONE); assert(jobdb_execution_requeue_admin(db, id, completed.revision, NULL) == JOBDB_ERR_INVALID_ARGUMENT); }
      assert(handled >= 1);
     assert(jobcore_stop(core) == JOBDB_OK);

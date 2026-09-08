@@ -155,7 +155,7 @@ static void process_one(jobcore_t *c, const jobdb_worker_id_t *worker) {
     if (record.payload) jobdb_record_free(&record); heartbeat_stop(&heartbeat);
     if (missing_handler) { (void)jobdb_execution_park(c->db, execution.execution_id, worker, execution.fencing_token, NULL); return; }
     if (result == JOBDB_OK) { if (jobdb_execution_complete(c->db, execution.execution_id, worker, execution.fencing_token) == JOBDB_OK) workflow_progress(c, execution.execution_id); }
-    else { jobdb_record_t retry_record = {0}; retry_record_t policy = {0}; int has_retry = jobdb_record_get(c->db, RETRY_RECORD_TYPE, execution.execution_id, &retry_record) == JOBDB_OK && retry_decode(retry_record.payload, retry_record.payload_size, &policy) == JOBDB_OK; if (retry_record.payload) jobdb_record_free(&retry_record); if (has_retry && policy.policy != JOBCORE_RETRY_NONE && execution.attempt + 1u < policy.max_attempts) { int64_t eligible = current_time() + retry_delay(&policy, execution.attempt + 1u, execution.execution_id); jobdb_result_t retry_result = JOBDB_ERR_BUSY; unsigned retry_count; for (retry_count = 0; retry_count < 100 && retry_result == JOBDB_ERR_BUSY; ++retry_count) { retry_result = jobdb_execution_retry(c->db, execution.execution_id, worker, execution.fencing_token, eligible, NULL); if (retry_result == JOBDB_ERR_BUSY || retry_result == JOBDB_ERR_CONFLICT) sleep_ms(2); } } else { jobdb_execution_state_t final_state = has_retry && policy.policy != JOBCORE_RETRY_NONE ? JOBDB_EXEC_DEAD : JOBDB_EXEC_FAILED; (void)finalize_with_retry(c->db, execution.execution_id, worker, execution.fencing_token, final_state, 0, (int32_t)result); } }
+    else { jobdb_record_t retry_record = {0}; retry_record_t policy = {0}; int has_retry = jobdb_record_get(c->db, RETRY_RECORD_TYPE, execution.execution_id, &retry_record) == JOBDB_OK && retry_decode(retry_record.payload, retry_record.payload_size, &policy) == JOBDB_OK; if (retry_record.payload) jobdb_record_free(&retry_record); if (has_retry && policy.policy != JOBCORE_RETRY_NONE && execution.attempt + 1u < policy.max_attempts) { int64_t eligible = current_time() + retry_delay(&policy, execution.attempt + 1u, execution.execution_id); jobdb_result_t retry_result = JOBDB_ERR_BUSY; unsigned retry_count; for (retry_count = 0; retry_count < 100 && retry_result == JOBDB_ERR_BUSY; ++retry_count) { retry_result = jobdb_execution_retry(c->db, execution.execution_id, worker, execution.fencing_token, eligible, NULL); if (retry_result == JOBDB_ERR_BUSY || retry_result == JOBDB_ERR_CONFLICT) sleep_ms(2); } } else { jobdb_execution_state_t final_state = has_retry && policy.policy != JOBCORE_RETRY_NONE ? JOBDB_EXEC_DEAD : JOBDB_EXEC_FAILED; if (finalize_with_retry(c->db, execution.execution_id, worker, execution.fencing_token, final_state, 0, (int32_t)result) == JOBDB_OK) workflow_progress(c, execution.execution_id); } }
 }
 
 static uint64_t allocate_execution_id(jobcore_t *c) {
@@ -190,6 +190,18 @@ static int schedule_active(jobcore_t *c, uint64_t schedule_id) {
     for (i = 0; i < count; ++i) if (jobdb_execution_get(c->db, ids[i], &e) == JOBDB_OK && e.schedule_id == schedule_id && (e.state == JOBDB_EXEC_READY || e.state == JOBDB_EXEC_LEASED || e.state == JOBDB_EXEC_RUNNING)) { free(ids); return 1; }
     free(ids); return 0;
 }
+static uint64_t schedule_queued(jobcore_t *c, uint64_t schedule_id) {
+    uint64_t *ids = NULL, queued = 0; size_t count = 0, i; jobdb_execution_t e;
+    if (!load_all_record_ids(c, 3, &ids, &count)) return 0;
+    for (i = 0; i < count; ++i) if (jobdb_execution_get(c->db, ids[i], &e) == JOBDB_OK && e.schedule_id == schedule_id && e.state == JOBDB_EXEC_BLOCKED) { queued = e.execution_id; break; }
+    free(ids); return queued;
+}
+static int schedule_advance(jobcore_t *c, jobdb_schedule_t *schedule, uint64_t count, int64_t last_fire, int64_t next_fire) {
+    jobdb_schedule_t updated = *schedule;
+    if (!count || count > UINT64_MAX - updated.occurrence_count) return 0;
+    updated.occurrence_count += count; updated.last_fire_at = last_fire; updated.next_fire_at = next_fire;
+    return jobdb_schedule_update(c->db, &updated, schedule->revision) == JOBDB_OK;
+}
 static void discard_scheduled_fire(jobcore_t *c, jobdb_schedule_t *schedule, int64_t fire_at, int64_t next_fire) {
     uint64_t id = allocate_execution_id(c), revision;
     if (id && jobdb_schedule_try_fire(c->db, schedule->schedule_id, schedule->revision, schedule->next_fire_at, id, fire_at, next_fire) == JOBDB_OK) {
@@ -201,8 +213,14 @@ static void scheduler_iteration(jobcore_t *c) {
     uint64_t *ids = NULL; size_t count = 0, i; int64_t now = current_time(); jobdb_schedule_t schedule;
     if (!load_all_record_ids(c, 2, &ids, &count)) return;
     for (i = 0; i < count && !c->stopping; ++i) {
-        int64_t fire_at, next_fire; uint64_t execution_id;
+        int64_t fire_at, next_fire; uint64_t execution_id, queued_id;
         if (jobdb_schedule_get(c->db, ids[i], &schedule) != JOBDB_OK || !schedule.enabled) continue;
+        queued_id = schedule_queued(c, schedule.schedule_id);
+        if (queued_id && !schedule_active(c, schedule.schedule_id)) {
+            jobdb_execution_t queued;
+            if (jobdb_execution_get(c->db, queued_id, &queued) == JOBDB_OK) (void)jobdb_execution_transition(c->db, queued_id, queued.revision, JOBDB_EXEC_READY, NULL);
+            continue;
+        }
         fire_at = schedule.next_fire_at;
         if (schedule.schedule_type == JOBCORE_SCHEDULE_CRON) {
             jobdb_record_t cron_record = {0};
@@ -214,14 +232,40 @@ static void scheduler_iteration(jobcore_t *c) {
         }
         if (schedule.schedule_type == JOBCORE_SCHEDULE_INTERVAL && schedule.interval_mode == JOBCORE_FIXED_DELAY && fire_at == INT64_MAX) {
             int64_t finished = latest_finished_for_schedule(c, schedule.schedule_id);
-            if (finished > 0 && schedule.interval <= (uint64_t)(INT64_MAX - finished)) fire_at = finished + (int64_t)schedule.interval;
+            if (schedule_active(c, schedule.schedule_id) || queued_id) continue;
+            if (schedule.max_occurrences && schedule.occurrence_count >= schedule.max_occurrences) continue;
+            if (finished > 0 && schedule.interval <= (uint64_t)(INT64_MAX - finished)) {
+                int64_t candidate = finished + (int64_t)schedule.interval;
+                if (schedule.end_at && candidate > schedule.end_at) continue;
+                schedule.next_fire_at = candidate;
+                if (jobdb_schedule_update(c->db, &schedule, schedule.revision) == JOBDB_OK) continue;
+            }
         }
         if (fire_at > now || fire_at == INT64_MAX) continue;
+        if ((schedule.max_occurrences && schedule.occurrence_count >= schedule.max_occurrences) || (schedule.end_at && fire_at > schedule.end_at)) {
+            schedule.next_fire_at = INT64_MAX; (void)jobdb_schedule_update(c->db, &schedule, schedule.revision); continue;
+        }
         {
             int64_t cadence = schedule.schedule_type == JOBCORE_SCHEDULE_INTERVAL && schedule.interval ? (int64_t)schedule.interval : 60;
             int64_t missed = now > fire_at ? (now - fire_at) / cadence : 0;
             int active = schedule_active(c, schedule.schedule_id);
-            if (active && (schedule.overlap_policy == JOBCORE_OVERLAP_SKIP || schedule.overlap_policy == JOBCORE_OVERLAP_QUEUE_ONE)) {
+            if (missed > 0 && schedule.misfire_policy == JOBCORE_MISFIRE_CATCH_UP_ALL) {
+                uint64_t due = (uint64_t)missed + 1u, allowed = due;
+                uint64_t limit = schedule.catch_up_max ? schedule.catch_up_max : 100u;
+                if (schedule.end_at && now > schedule.end_at) allowed = (uint64_t)((schedule.end_at - fire_at) / cadence) + 1u;
+                if (schedule.max_occurrences && allowed > schedule.max_occurrences - schedule.occurrence_count) allowed = schedule.max_occurrences - schedule.occurrence_count;
+                if (allowed > limit) {
+                    uint64_t dropped = allowed - limit;
+                    int64_t retained = fire_at + (int64_t)dropped * cadence;
+                    (void)schedule_advance(c, &schedule, dropped, retained - cadence, retained);
+                    continue;
+                }
+            }
+            if (active && schedule.overlap_policy == JOBCORE_OVERLAP_SKIP) {
+                discard_scheduled_fire(c, &schedule, fire_at, fire_at + cadence);
+                continue;
+            }
+            if (active && schedule.overlap_policy == JOBCORE_OVERLAP_QUEUE_ONE && queued_id) {
                 discard_scheduled_fire(c, &schedule, fire_at, fire_at + cadence);
                 continue;
             }
@@ -230,10 +274,6 @@ static void scheduler_iteration(jobcore_t *c) {
                 continue;
             }
             if (missed > 0 && (schedule.misfire_policy == JOBCORE_MISFIRE_RUN_ONCE || schedule.misfire_policy == JOBCORE_MISFIRE_RUN_LAST)) fire_at = now;
-            if (missed > 0 && schedule.misfire_policy == JOBCORE_MISFIRE_CATCH_UP_ALL) {
-                int64_t limit = schedule.catch_up_max ? (int64_t)schedule.catch_up_max : 100;
-                if (missed > limit && limit > 0 && cadence > 0 && limit <= INT64_MAX / cadence && now >= limit * cadence) fire_at = now - limit * cadence;
-            }
         }
         execution_id = allocate_execution_id(c); if (!execution_id) continue;
         next_fire = INT64_MAX;
@@ -243,7 +283,8 @@ static void scheduler_iteration(jobcore_t *c) {
             if (schedule.end_at && next_fire > schedule.end_at) next_fire = INT64_MAX;
         }
          {
-             if (jobdb_schedule_try_fire(c->db, schedule.schedule_id, schedule.revision, schedule.next_fire_at, execution_id, fire_at, next_fire) == JOBDB_OK) {
+             jobdb_execution_state_t initial_state = schedule.overlap_policy == JOBCORE_OVERLAP_QUEUE_ONE && schedule_active(c, schedule.schedule_id) ? JOBDB_EXEC_BLOCKED : JOBDB_EXEC_READY;
+             if (jobdb_schedule_try_fire_state(c->db, schedule.schedule_id, schedule.revision, schedule.next_fire_at, execution_id, fire_at, next_fire, initial_state) == JOBDB_OK) {
              if (schedule.schedule_type != JOBCORE_SCHEDULE_INTERVAL) { /* next_fire == INT64_MAX makes one-shot schedules inert */ }
              }
          }
@@ -353,7 +394,7 @@ static void workflow_progress(jobcore_t *c, uint64_t completed_id) {
     for (i = 0; i < count; ++i) if (jobdb_record_get(c->db, WORKFLOW_NODE_RECORD_TYPE, ids[i], &r) == JOBDB_OK) { if (workflow_decode(r.payload, r.payload_size, &node) == JOBDB_OK) { if (node.execution_id == completed_id) current = node; } jobdb_record_free(&r); }
     if (!current.workflow_id) { free(ids); return; }
     for (i = 0; i < count; ++i) if (jobdb_record_get(c->db, WORKFLOW_NODE_RECORD_TYPE, ids[i], &r) == JOBDB_OK) {
-        if (workflow_decode(r.payload, r.payload_size, &node) == JOBDB_OK) { int ready = 1, failed = 0; for (j = 0; j < node.dependency_count; ++j) { jobdb_execution_state_t state; if (!workflow_state(c, node.dependencies[j], &state) || (state != JOBDB_EXEC_DONE && state != JOBDB_EXEC_FAILED && state != JOBDB_EXEC_DEAD && state != JOBDB_EXEC_CANCELLED)) ready = 0; if (state == JOBDB_EXEC_FAILED || state == JOBDB_EXEC_DEAD || state == JOBDB_EXEC_CANCELLED) failed = 1; } if (node.workflow_id == current.workflow_id && (workflow_cancel_requested(c,current.workflow_id) || (ready && node.policy != JOBCORE_DEP_BLOCK))) { uint64_t revision; if (workflow_cancel_requested(c,current.workflow_id) || (failed && (node.policy == JOBCORE_DEP_CANCEL || node.policy == JOBCORE_DEP_FAIL_WORKFLOW))) (void)jobdb_execution_transition(c->db, node.execution_id, 1, JOBDB_EXEC_CANCELLED, &revision); else if (!failed || node.policy == JOBCORE_DEP_CONTINUE) (void)jobdb_execution_transition(c->db, node.execution_id, 1, JOBDB_EXEC_READY, &revision); } }
+        if (workflow_decode(r.payload, r.payload_size, &node) == JOBDB_OK) { int ready = 1, failed = 0; for (j = 0; j < node.dependency_count; ++j) { jobdb_execution_state_t state = JOBDB_EXEC_CREATED; int found = workflow_state(c, node.dependencies[j], &state); if (!found || (state != JOBDB_EXEC_DONE && state != JOBDB_EXEC_FAILED && state != JOBDB_EXEC_DEAD && state != JOBDB_EXEC_CANCELLED)) ready = 0; if (found && (state == JOBDB_EXEC_FAILED || state == JOBDB_EXEC_DEAD || state == JOBDB_EXEC_CANCELLED)) failed = 1; } if (node.workflow_id == current.workflow_id && (workflow_cancel_requested(c,current.workflow_id) || ready)) { uint64_t revision; if (workflow_cancel_requested(c,current.workflow_id) || (failed && (node.policy == JOBCORE_DEP_CANCEL || node.policy == JOBCORE_DEP_FAIL_WORKFLOW))) (void)jobdb_execution_transition(c->db, node.execution_id, 1, JOBDB_EXEC_CANCELLED, &revision); else if (!failed || node.policy == JOBCORE_DEP_CONTINUE) (void)jobdb_execution_transition(c->db, node.execution_id, 1, JOBDB_EXEC_READY, &revision); } }
         jobdb_record_free(&r);
     }
     free(ids);
