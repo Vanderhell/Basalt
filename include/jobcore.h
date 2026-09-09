@@ -76,6 +76,7 @@ jobdb_result_t jobcore_workflow_submit(jobcore_t *, uint64_t, const jobcore_work
 jobdb_result_t jobcore_workflow_get(jobcore_t *, uint64_t, jobcore_workflow_status_t *);
 jobdb_result_t jobcore_workflow_cancel(jobcore_t *, uint64_t);
 jobdb_result_t jobcore_schedule_create(jobcore_t *, const jobcore_schedule_spec_t *);
+jobdb_result_t jobcore_schedule_create_ex(jobcore_t *, const jobcore_schedule_spec_t *, int64_t end_at);
 jobdb_result_t jobcore_schedule_get(jobcore_t *, uint64_t, jobdb_schedule_t *);
 jobdb_result_t jobcore_schedule_update(jobcore_t *, const jobdb_schedule_t *, uint64_t);
 jobdb_result_t jobcore_schedule_pause(jobcore_t *, uint64_t, uint64_t);

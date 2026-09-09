@@ -58,6 +58,7 @@ jobdb_result_t basalt_ledger_list(jobdb_t *db, uint64_t *ids, size_t capacity, s
 jobdb_result_t basalt_stats_get(jobdb_t *db, basalt_stats_view_t *out_stats);
 jobdb_result_t basalt_db_health(jobdb_t *db);
 jobdb_result_t basalt_schedule_create(jobcore_t *core, uint64_t schedule_id, uint64_t job_type, uint32_t schedule_type, int64_t first_fire_at, int64_t interval, uint32_t interval_mode, uint64_t max_occurrences, const void *payload, uint32_t payload_size, uint32_t payload_version, const char *cron_expression, const char *timezone, uint32_t misfire_policy, uint32_t overlap_policy, uint32_t catch_up_max);
+jobdb_result_t basalt_schedule_create_v2(jobcore_t *core, uint64_t schedule_id, uint64_t job_type, uint32_t schedule_type, int64_t first_fire_at, int64_t end_at, int64_t interval, uint32_t interval_mode, uint64_t max_occurrences, const void *payload, uint32_t payload_size, uint32_t payload_version, const char *cron_expression, const char *timezone, uint32_t misfire_policy, uint32_t overlap_policy, uint32_t catch_up_max);
 jobdb_result_t basalt_schedule_get(jobcore_t *core, uint64_t schedule_id, basalt_schedule_view_t *out_schedule);
 jobdb_result_t basalt_schedule_list(jobcore_t *core, uint64_t *ids, size_t capacity, size_t *out_count);
 jobdb_result_t basalt_schedule_update(jobcore_t *core, const basalt_schedule_view_t *schedule, uint64_t expected_revision);

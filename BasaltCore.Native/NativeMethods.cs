@@ -152,6 +152,8 @@ public static class NativeMethods
     public static extern JobDbResult basalt_db_health(nint db);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
     public static extern JobDbResult basalt_schedule_create(nint core, ulong scheduleId, ulong jobType, uint scheduleType, long firstFireAt, long interval, uint intervalMode, ulong maxOccurrences, byte[]? payload, uint payloadSize, uint payloadVersion, string? cronExpression, string? timezone, uint misfirePolicy, uint overlapPolicy, uint catchUpMax);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    public static extern JobDbResult basalt_schedule_create_v2(nint core, ulong scheduleId, ulong jobType, uint scheduleType, long firstFireAt, long endAt, long interval, uint intervalMode, ulong maxOccurrences, byte[]? payload, uint payloadSize, uint payloadVersion, string? cronExpression, string? timezone, uint misfirePolicy, uint overlapPolicy, uint catchUpMax);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     public static extern JobDbResult basalt_schedule_get(nint core, ulong scheduleId, out ScheduleView schedule);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]

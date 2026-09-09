@@ -57,7 +57,8 @@ basalt.RegisterHandler<Payload>("facade-job",(job,ctx,ct)=>{if(Interlocked.Incre
 ulong facadeExecution=await basalt.EnqueueAsync("facade-job",new Payload{Value=1},new EnqueueOptions{IdempotencyKey="facade-retry-idempotency",Retry=RetryOptions.Fixed(2,TimeSpan.FromSeconds(1))});
 ulong facadeDuplicate=await basalt.EnqueueAsync("facade-job",new Payload{Value=1},new EnqueueOptions{IdempotencyKey="facade-retry-idempotency",Retry=RetryOptions.Fixed(2,TimeSpan.FromSeconds(1))});
 if(facadeExecution!=facadeDuplicate)throw new Exception("Atomic retry/idempotency enqueue did not resolve to one execution.");
-await basalt.ScheduleAsync("once",new Payload{Value=2},s=>s.Delay(TimeSpan.FromMilliseconds(100)));
+await basalt.ScheduleAsync("once",new Payload{Value=2},s=>s.Delay(TimeSpan.FromMilliseconds(100)).Until(DateTimeOffset.UtcNow.AddHours(1)));
+if(basalt.GetSchedule("once").EndAt==0)throw new Exception("Typed schedule EndAt was not persisted.");basalt.PauseSchedule("once");if(basalt.GetSchedule("once").Enabled)throw new Exception("Schedule pause convenience failed.");basalt.ResumeSchedule("once");
 await basalt.Workflow("wf").Add("first",new Payload{Value=3}).Then("second",new Payload{Value=4}).SubmitAsync();
 await basalt.StartAsync();await facadeDone.Task.WaitAsync(TimeSpan.FromSeconds(20));await basalt.StopAsync();
 if(basalt.GetExecution(facadeExecution).State!=7||basalt.ListExecutions(2).Count!=2||basalt.GetStats().CompletedTotal<4||basalt.GetLedger(facadeExecution).FinalState!=7)throw new Exception("Storage-neutral SQL management returned inconsistent state.");basalt.VerifyHealth();
