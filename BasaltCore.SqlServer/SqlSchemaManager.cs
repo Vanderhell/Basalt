@@ -7,7 +7,7 @@ namespace BasaltCore.SqlServer;
 
 public sealed class SqlSchemaManager
 {
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
     private readonly SqlServerConnectionFactory _connections;
     private readonly SqlServerOptions _options;
     public SqlSchemaManager(SqlServerConnectionFactory connections, SqlServerOptions options)
@@ -21,7 +21,7 @@ public sealed class SqlSchemaManager
         else await ValidateAsync(connection, cancellationToken).ConfigureAwait(false);
     }
 
-    public string GenerateMigrationScript() => Migration1(SqlIdentifier.Quote(_options.Schema));
+    public string GenerateMigrationScript() { string s=SqlIdentifier.Quote(_options.Schema); return Migration1(s)+Environment.NewLine+Migration2(s); }
 
     private async Task MigrateAsync(DbConnection connection, CancellationToken token)
     {
@@ -33,6 +33,8 @@ public sealed class SqlSchemaManager
             await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
             using DbCommand migrate = Create(connection, transaction, Migration1(SqlIdentifier.Quote(_options.Schema)));
             await migrate.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+            using DbCommand migrate2 = Create(connection, transaction, Migration2(SqlIdentifier.Quote(_options.Schema)));
+            await migrate2.ExecuteNonQueryAsync(token).ConfigureAwait(false);
             transaction.Commit();
         }
         catch { transaction.Rollback(); throw; }
@@ -48,7 +50,7 @@ public sealed class SqlSchemaManager
             using DbDataReader reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
             if (!await reader.ReadAsync(token).ConfigureAwait(false)) throw new InvalidOperationException("The Basalt schema has no migration history.");
             int version = reader.GetInt32(0); string checksum = reader.GetString(1);
-            if (version != CurrentVersion || !StringComparer.Ordinal.Equals(checksum, Checksum(MigrationBody(schema))))
+            if (version != CurrentVersion || !StringComparer.Ordinal.Equals(checksum, Checksum(Migration2Body(schema))))
                 throw new InvalidOperationException(version > CurrentVersion ? "The Basalt SQL schema is newer than this provider." : "The Basalt SQL schema is incompatible or its migration checksum differs.");
         }
         catch (DbException ex) { throw new InvalidOperationException("The Basalt SQL schema is missing, inaccessible, or invalid. ValidateOnly and Manual modes never execute DDL.", ex); }
@@ -68,6 +70,16 @@ IF OBJECT_ID(N'{s}.[SchemaHistory]',N'U') IS NULL BEGIN
 INSERT INTO {s}.[SchemaHistory]([Version],[Checksum],[ProviderVersion],[AppliedAtUtc]) VALUES(1,'{checksum}','1',SYSUTCDATETIME());
 END ELSE IF NOT EXISTS(SELECT 1 FROM {s}.[SchemaHistory] WHERE [Version]=1 AND [Checksum]='{checksum}') THROW 51001,'Incompatible Basalt schema history.',1;";
     }
+    private static string Migration2(string s)
+    {
+        string body=Migration2Body(s), checksum=Checksum(body), previous=Checksum(MigrationBody(s));
+        return $@"IF NOT EXISTS(SELECT 1 FROM {s}.[SchemaHistory] WHERE [Version]=1 AND [Checksum]='{previous}') THROW 51001,'Incompatible Basalt schema history.',1;
+IF NOT EXISTS(SELECT 1 FROM {s}.[SchemaHistory] WHERE [Version]=2) BEGIN
+{body}
+INSERT INTO {s}.[SchemaHistory]([Version],[Checksum],[ProviderVersion],[AppliedAtUtc]) VALUES(2,'{checksum}','2',SYSUTCDATETIME());
+END ELSE IF NOT EXISTS(SELECT 1 FROM {s}.[SchemaHistory] WHERE [Version]=2 AND [Checksum]='{checksum}') THROW 51001,'Incompatible Basalt schema history.',1;";
+    }
+    private static string Migration2Body(string s) => $@"ALTER TABLE {s}.[Receipts] ALTER COLUMN [Payload] varbinary(max) NOT NULL;";
     private static string MigrationBody(string s) => $@"CREATE TABLE {s}.[SchemaHistory]([Version] int NOT NULL PRIMARY KEY,[Checksum] char(64) NOT NULL,[ProviderVersion] nvarchar(32) NOT NULL,[AppliedAtUtc] datetime2(7) NOT NULL);
 CREATE SEQUENCE {s}.[ExecutionIds] AS bigint START WITH 1 INCREMENT BY 1;
 CREATE TABLE {s}.[Records]([RecordType] int NOT NULL,[RecordId] bigint NOT NULL,[Revision] bigint NOT NULL CONSTRAINT [DF_Basalt_RecordRevision] DEFAULT(1),[Payload] varbinary(max) NOT NULL,CONSTRAINT [PK_Basalt_Records] PRIMARY KEY([RecordType],[RecordId]));

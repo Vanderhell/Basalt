@@ -55,7 +55,26 @@ internal sealed class SqlStorageBridge : IDisposable
     private JobDbResult EnqueueCallback(IntPtr c,ref Execution e,uint type,IntPtr payload,uint size)=>EnqueueCore(ref e,type,Bytes(payload,size),null,null);
     private JobDbResult EnqueueExtraCallback(IntPtr c,ref Execution e,uint type,IntPtr payload,uint size,uint extraType,IntPtr extra,uint extraSize)=>EnqueueCore(ref e,type,Bytes(payload,size),(extraType,Bytes(extra,extraSize)),null);
     private JobDbResult EnqueueReceiptCallback(IntPtr c,ref Execution e,uint type,IntPtr payload,uint size,ulong receiptId,IntPtr receipt,uint receiptSize)=>EnqueueCore(ref e,type,Bytes(payload,size),null,(receiptId,Bytes(receipt,receiptSize)));
-    private JobDbResult EnqueueCore(ref Execution e,uint type,byte[] payload,(uint,byte[])? extra,(ulong,byte[])? receipt){Execution copy=e;return Run(()=>{using var db=Open();using var tx=db.BeginTransaction(IsolationLevel.ReadCommitted);try{InsertExecution(db,tx,ref copy);InsertRecord(db,tx,type,copy.Id,payload);if(extra.HasValue)InsertRecord(db,tx,extra.Value.Item1,copy.Id,extra.Value.Item2);if(receipt.HasValue){using var cmd=Command(db,tx,$"INSERT INTO {_schema}.[Receipts] VALUES(@i,@p)");P(cmd,"@i",L(receipt.Value.Item1));P(cmd,"@p",receipt.Value.Item2);cmd.ExecuteNonQuery();}IncrementStats(db,tx,"Submitted");tx.Commit();return JobDbResult.Ok;}catch{tx.Rollback();throw;}});}
+    private JobDbResult EnqueueCore(ref Execution e,uint type,byte[] payload,(uint,byte[])? extra,(ulong,byte[])? receipt)
+    {
+        Execution copy=e;
+        try
+        {
+            using var db=Open();using var tx=db.BeginTransaction(IsolationLevel.ReadCommitted);
+            try
+            {
+                InsertExecution(db,tx,ref copy);InsertRecord(db,tx,type,copy.Id,payload);
+                if(extra.HasValue)InsertRecord(db,tx,extra.Value.Item1,copy.Id,extra.Value.Item2);
+                if(receipt.HasValue){using var cmd=Command(db,tx,$"INSERT INTO {_schema}.[Receipts] VALUES(@i,@p)");P(cmd,"@i",L(receipt.Value.Item1));P(cmd,"@p",receipt.Value.Item2);cmd.ExecuteNonQuery();}
+                IncrementStats(db,tx,"Submitted");
+                try{tx.Commit();}
+                catch(SqlException){return JobDbResult.UnknownCommit;}
+                return JobDbResult.Ok;
+            }
+            catch{try{tx.Rollback();}catch{}throw;}
+        }
+        catch(Exception ex){return Error(ex);}
+    }
     private JobDbResult ReceiptGetCallback(IntPtr c,ulong id,IntPtr payload,uint capacity,out uint size){uint n=0;var r=Run(()=>{using var db=Open();using var cmd=Command(db,null,$"SELECT [Payload] FROM {_schema}.[Receipts] WHERE [ReceiptId]=@i");P(cmd,"@i",L(id));object? o=cmd.ExecuteScalar();if(o==null)return JobDbResult.NotFound;byte[] b=(byte[])o;n=(uint)b.Length;if(n>capacity)return JobDbResult.Limit;if(n!=0)Marshal.Copy(b,0,payload,b.Length);return JobDbResult.Ok;});size=n;return r;}
     private Execution ReadExecution(DbDataReader r)=>new(){Id=U(r[0]),JobType=U(r[1]),ScheduleId=U(r[2]),WorkflowId=U(r[3]),State=Convert.ToUInt32(r[4]),CreatedAt=Convert.ToInt64(r[5]),EligibleAt=Convert.ToInt64(r[6]),StartedAt=Convert.ToInt64(r[7]),FinishedAt=Convert.ToInt64(r[8]),Priority=Convert.ToInt32(r[9]),Attempt=Convert.ToUInt32(r[10]),MaxAttempts=Convert.ToUInt32(r[11]),Revision=U(r[12]),WorkerId=r.IsDBNull(13)?new byte[16]:(byte[])r[13],LeaseExpiresAt=Convert.ToInt64(r[14]),FencingToken=U(r[15])};
     private JobDbResult ExecutionGetCallback(IntPtr c,ulong id,out Execution execution){Execution e=default;var result=Run(()=>{using var db=Open();using var cmd=Command(db,null,$"SELECT * FROM {_schema}.[Executions] WHERE [ExecutionId]=@i");P(cmd,"@i",L(id));using var r=cmd.ExecuteReader();if(!r.Read())return JobDbResult.NotFound;e=ReadExecution(r);return JobDbResult.Ok;});execution=e;return result;}

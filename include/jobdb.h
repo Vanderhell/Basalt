@@ -96,7 +96,9 @@ typedef enum jobdb_result {
     JOBDB_ERR_INVALID_STATE,
     JOBDB_ERR_BUSY,
     JOBDB_ERR_TIMEOUT,
-    JOBDB_ERR_STALE_LEASE
+    JOBDB_ERR_STALE_LEASE,
+    JOBDB_ERR_UNSUPPORTED,
+    JOBDB_ERR_UNKNOWN_COMMIT
 } jobdb_result_t;
 
 jobdb_result_t jobdb_create(const char *path, jobdb_t **out_db);

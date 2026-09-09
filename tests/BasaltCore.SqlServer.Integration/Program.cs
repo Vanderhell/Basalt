@@ -33,7 +33,9 @@ using(var validated=await SqlServerStorage.OpenAsync(connection,o=>{o.Schema=fac
 using var basalt=Basalt.Create(o=>o.UseSqlServer(connection,s=>{s.Schema=facadeSchema;s.SchemaManagement=SchemaManagement.ValidateOnly;}));
 int facadeHandled=0;var facadeDone=new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 basalt.RegisterHandler<Payload>("facade-job",(job,ctx,ct)=>{if(Interlocked.Increment(ref facadeHandled)>=4)facadeDone.TrySetResult(true);return Task.CompletedTask;});
-ulong facadeExecution=await basalt.EnqueueAsync("facade-job",new Payload{Value=1},new EnqueueOptions{Retry=RetryOptions.Fixed(2,TimeSpan.FromSeconds(1))});
+ulong facadeExecution=await basalt.EnqueueAsync("facade-job",new Payload{Value=1},new EnqueueOptions{IdempotencyKey="facade-retry-idempotency",Retry=RetryOptions.Fixed(2,TimeSpan.FromSeconds(1))});
+ulong facadeDuplicate=await basalt.EnqueueAsync("facade-job",new Payload{Value=1},new EnqueueOptions{IdempotencyKey="facade-retry-idempotency",Retry=RetryOptions.Fixed(2,TimeSpan.FromSeconds(1))});
+if(facadeExecution!=facadeDuplicate)throw new Exception("Atomic retry/idempotency enqueue did not resolve to one execution.");
 await basalt.ScheduleAsync("once",new Payload{Value=2},s=>s.Delay(TimeSpan.FromMilliseconds(100)));
 await basalt.Workflow("wf").Add("first",new Payload{Value=3}).Then("second",new Payload{Value=4}).SubmitAsync();
 await basalt.StartAsync();await facadeDone.Task.WaitAsync(TimeSpan.FromSeconds(20));await basalt.StopAsync();

@@ -18,7 +18,9 @@ public enum JobDbResult
     InvalidState = 11,
     Busy = 12,
     Timeout = 13,
-    StaleLease = 14
+    StaleLease = 14,
+    Unsupported = 15,
+    UnknownCommit = 16
 }
 
 public static class NativeMethods
@@ -109,6 +111,7 @@ public static class NativeMethods
     public static extern JobDbResult basalt_core_enqueue_idempotent(nint core, string idempotencyKey, ulong type,
         byte[]? payload, uint size, uint version, long now, uint maxAttempts, out ulong executionId);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] public static extern JobDbResult basalt_core_enqueue_retry(nint core, ulong type, byte[]? payload, uint size, uint version, long now, ref RetrySpec retry, out ulong executionId);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)] public static extern JobDbResult basalt_core_enqueue_idempotent_retry(nint core,string key,ulong type,byte[]? payload,uint size,uint version,long now,ref RetrySpec retry,out ulong executionId);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] public static extern JobDbResult basalt_core_workflow_submit(nint core, ulong workflowId, [In] WorkflowNode[] nodes, uint count, uint policy, long now);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] public static extern JobDbResult basalt_workflow_get(nint core, ulong workflowId, out WorkflowStatus status);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] public static extern JobDbResult basalt_workflow_cancel(nint core, ulong workflowId);

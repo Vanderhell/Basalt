@@ -71,6 +71,7 @@ jobdb_result_t jobcore_enqueue(jobcore_t *, uint64_t, const void *, uint32_t, ui
 jobdb_result_t jobcore_enqueue_name(jobcore_t *, const char *, const void *, uint32_t, uint32_t, int64_t, uint32_t, uint64_t *);
 jobdb_result_t jobcore_enqueue_with_retry(jobcore_t *, uint64_t, const void *, uint32_t, uint32_t, int64_t, const jobcore_retry_spec_t *, uint64_t *);
 jobdb_result_t jobcore_enqueue_idempotent(jobcore_t *, const char *, uint64_t, const void *, uint32_t, uint32_t, int64_t, uint32_t, uint64_t *);
+jobdb_result_t jobcore_enqueue_idempotent_with_retry(jobcore_t *, const char *, uint64_t, const void *, uint32_t, uint32_t, int64_t, const jobcore_retry_spec_t *, uint64_t *);
 jobdb_result_t jobcore_workflow_submit(jobcore_t *, uint64_t, const jobcore_workflow_node_t *, size_t, jobcore_dependency_policy_t, int64_t);
 jobdb_result_t jobcore_workflow_get(jobcore_t *, uint64_t, jobcore_workflow_status_t *);
 jobdb_result_t jobcore_workflow_cancel(jobcore_t *, uint64_t);

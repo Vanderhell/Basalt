@@ -3,10 +3,22 @@ using BasaltCore.Native;
 
 namespace BasaltCore;
 
-public sealed class BasaltException : Exception
+public class BasaltException : Exception
 {
     public BasaltException(JobDbResult result) : base("Basalt operation failed: " + result) { Result = result; }
     public JobDbResult Result { get; }
+}
+
+public sealed class BasaltUnknownCommitException : BasaltException
+{
+    public BasaltUnknownCommitException(string idempotencyKey, ulong proposedExecutionId)
+        : base(JobDbResult.UnknownCommit)
+    {
+        IdempotencyKey=idempotencyKey; ProposedExecutionId=proposedExecutionId;
+    }
+    public string IdempotencyKey { get; }
+    public ulong ProposedExecutionId { get; }
+    public override string Message => $"The storage connection failed while committing execution {ProposedExecutionId}; the outcome is unknown. Retry with the same idempotency key '{IdempotencyKey}' to resolve it safely.";
 }
 
 internal sealed class BasaltDbHandle : SafeHandle
