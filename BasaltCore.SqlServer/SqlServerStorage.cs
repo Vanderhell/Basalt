@@ -1,3 +1,4 @@
+using BasaltCore.Native;
 namespace BasaltCore.SqlServer;
 
 public sealed class SqlServerStorage : BasaltStorage
@@ -18,6 +19,7 @@ public sealed class SqlServerStorage : BasaltStorage
     public override void Requeue(ulong executionId,ulong expectedRevision)=>Bridge.ManagementRequeue(executionId,expectedRevision);
     public override void VerifyHealth()=>Bridge.ManagementHealth();
     private SqlStorageBridge Bridge=>_bridge??throw new ObjectDisposedException(nameof(SqlServerStorage));
+    internal JobDbResult TestClaim(byte[] worker,long lease,out BasaltCore.Native.StorageInterop.Execution execution)=>Bridge.TestClaim(worker,lease,out execution);internal JobDbResult TestStart(ulong id,byte[] worker,ulong fence)=>Bridge.TestStart(id,worker,fence);internal JobDbResult TestFinalize(ulong id,byte[] worker,ulong fence)=>Bridge.TestFinalize(id,worker,fence);
     public static async Task<SqlServerStorage> OpenAsync(string connectionString,Action<SqlServerOptions>? configure=null,CancellationToken cancellationToken=default)
     {var options=new SqlServerOptions();configure?.Invoke(options);var factory=new SqlServerConnectionFactory(connectionString);await new SqlSchemaManager(factory,options).InitializeAsync(cancellationToken).ConfigureAwait(false);return new SqlServerStorage(new SqlStorageBridge(factory,options));}
     public static async Task<SqlServerStorage> OpenAsync(Func<System.Data.Common.DbConnection> connectionFactory,Action<SqlServerOptions>? configure=null,CancellationToken cancellationToken=default)
