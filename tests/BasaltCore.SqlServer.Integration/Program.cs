@@ -1,9 +1,16 @@
 using BasaltCore;
 using BasaltCore.SqlServer;
 using Microsoft.Data.SqlClient;
+using System.Diagnostics;
 
 string? configured=Environment.GetEnvironmentVariable("BASALT_SQLSERVER_TEST_CONNECTION");
 string connection=configured??@"Server=.\SQLEXPRESS;Database=BasaltIntegrationTests;Integrated Security=true;Encrypt=false";
+if(args.Length==2&&args[0]=="--worker")
+{
+    string childSchema=args[1];using var childStorage=await SqlServerStorage.OpenAsync(connection,o=>{o.Schema=childSchema;o.SchemaManagement=SchemaManagement.ValidateOnly;});using var child=new BasaltEngine(childStorage,new BasaltOptions{WorkerCount=1,LeaseDurationSeconds=5});var childHandled=new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    child.RegisterHandler<Payload>("process-job",async(job,ctx,ct)=>{await using var db=new SqlConnection(connection);await db.OpenAsync(ct);await using var cmd=db.CreateCommand();cmd.CommandText=$"INSERT INTO [{childSchema}].[ClaimEvidence]([ProcessId]) VALUES(@p)";cmd.Parameters.AddWithValue("@p",Environment.ProcessId);await cmd.ExecuteNonQueryAsync(ct);childHandled.TrySetResult(true);});
+    await child.StartAsync();await Task.WhenAny(childHandled.Task,Task.Delay(TimeSpan.FromSeconds(12)));await child.StopAsync();return;
+}
 if(configured==null)
 {
     var builder=new SqlConnectionStringBuilder(connection){InitialCatalog="master"};
@@ -27,6 +34,14 @@ await done.Task.WaitAsync(TimeSpan.FromSeconds(20));await engine1.StopAsync();aw
 if(handled!=1)throw new Exception($"Expected one claim, observed {handled}.");
 await using(var verify=new SqlConnection(connection)){await verify.OpenAsync();await using var cmd=verify.CreateCommand();cmd.CommandText=$"SELECT COUNT(*) FROM [{schema}].[Executions] WHERE [ExecutionId]=@id AND [State]=7; SELECT COUNT(*) FROM dbo.BasaltForeignSentinel;";cmd.Parameters.AddWithValue("@id",checked((long)first));await using var reader=await cmd.ExecuteReaderAsync();if(!await reader.ReadAsync()||reader.GetInt32(0)!=1)throw new Exception("SQL execution did not finish durably.");await reader.NextResultAsync();if(!await reader.ReadAsync())throw new Exception("Foreign table was changed.");}
 Console.WriteLine($"SQL integration passed ({schema}, executions {first}/{duplicate}).");
+string processSchema="BasaltProcesses_"+Environment.ProcessId;ulong processExecution;
+using(var processStorage=await SqlServerStorage.OpenAsync(connection,o=>o.Schema=processSchema)){using var seed=new BasaltEngine(processStorage);processExecution=await seed.EnqueueAsync("process-job",new Payload{Value=77});await using var db=new SqlConnection(connection);await db.OpenAsync();await using var cmd=db.CreateCommand();cmd.CommandText=$"CREATE TABLE [{processSchema}].[ClaimEvidence]([Id] int IDENTITY PRIMARY KEY,[ProcessId] int NOT NULL)";await cmd.ExecuteNonQueryAsync();}
+string host=Environment.ProcessPath??throw new Exception("Cannot resolve integration test host.");string assembly=Environment.GetCommandLineArgs()[0];
+Process StartWorker(){var info=new ProcessStartInfo(host){UseShellExecute=false};if(Path.GetFileNameWithoutExtension(host).Equals("dotnet",StringComparison.OrdinalIgnoreCase))info.ArgumentList.Add(assembly);info.ArgumentList.Add("--worker");info.ArgumentList.Add(processSchema);info.Environment["BASALT_SQLSERVER_TEST_CONNECTION"]=connection;return Process.Start(info)??throw new Exception("Could not start SQL worker process.");}
+using Process worker1=StartWorker(),worker2=StartWorker();int evidence=0,state=0;
+for(int i=0;i<100;i++){await Task.Delay(100);await using var db=new SqlConnection(connection);await db.OpenAsync();await using var cmd=db.CreateCommand();cmd.CommandText=$"SELECT COUNT(*) FROM [{processSchema}].[ClaimEvidence]; SELECT [State] FROM [{processSchema}].[Executions] WHERE [ExecutionId]=@i";cmd.Parameters.AddWithValue("@i",checked((long)processExecution));await using var reader=await cmd.ExecuteReaderAsync();await reader.ReadAsync();evidence=reader.GetInt32(0);await reader.NextResultAsync();await reader.ReadAsync();state=reader.GetInt32(0);if(state==7)break;}
+await Task.WhenAll(worker1.WaitForExitAsync(),worker2.WaitForExitAsync());if(worker1.ExitCode!=0||worker2.ExitCode!=0||evidence!=1||state!=7)throw new Exception($"Independent-process claim failed: evidence={evidence}, state={state}, exits={worker1.ExitCode}/{worker2.ExitCode}.");
+Console.WriteLine($"SQL independent-process claim passed ({processSchema}).");
 string facadeSchema="BasaltFacade_"+Environment.ProcessId;
 var opens=await Task.WhenAll(SqlServerStorage.OpenAsync(connection,o=>o.Schema=facadeSchema),SqlServerStorage.OpenAsync(connection,o=>o.Schema=facadeSchema));foreach(var opened in opens)opened.Dispose();
 using(var validated=await SqlServerStorage.OpenAsync(connection,o=>{o.Schema=facadeSchema;o.SchemaManagement=SchemaManagement.ValidateOnly;})){}
@@ -39,7 +54,7 @@ if(facadeExecution!=facadeDuplicate)throw new Exception("Atomic retry/idempotenc
 await basalt.ScheduleAsync("once",new Payload{Value=2},s=>s.Delay(TimeSpan.FromMilliseconds(100)));
 await basalt.Workflow("wf").Add("first",new Payload{Value=3}).Then("second",new Payload{Value=4}).SubmitAsync();
 await basalt.StartAsync();await facadeDone.Task.WaitAsync(TimeSpan.FromSeconds(20));await basalt.StopAsync();
-if(basalt.GetExecution(facadeExecution).State!=7||basalt.GetStats().CompletedTotal<4||basalt.GetLedger(facadeExecution).FinalState!=7)throw new Exception("Storage-neutral SQL management returned inconsistent state.");basalt.VerifyHealth();
+if(basalt.GetExecution(facadeExecution).State!=7||basalt.ListExecutions(2).Count!=2||basalt.GetStats().CompletedTotal<4||basalt.GetLedger(facadeExecution).FinalState!=7)throw new Exception("Storage-neutral SQL management returned inconsistent state.");basalt.VerifyHealth();
 Console.WriteLine($"SQL facade/schedule/workflow passed ({facadeSchema}).");
 static ulong JobKeyForTest(){const string value="sql-raw";ulong h=1469598103934665603UL;foreach(byte b in System.Text.Encoding.UTF8.GetBytes(value)){h^=b;h*=1099511628211UL;}return h==0?1:h;}
 public sealed class Payload{public int Value{get;set;}}
