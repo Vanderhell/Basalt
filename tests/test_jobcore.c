@@ -110,7 +110,15 @@ int main(void) {
      wait_state(db, id, JOBDB_EXEC_DONE);
      wait_state(db, missing, JOBDB_EXEC_PAUSED);
      { jobdb_execution_t parked; jobdb_result_t resume=JOBDB_ERR_BUSY; unsigned retry; assert(jobdb_execution_get(db, missing, &parked) == JOBDB_OK); for(retry=0;retry<1000&&resume==JOBDB_ERR_BUSY;++retry){ resume=jobdb_execution_resume_paused(db,missing,parked.revision,NULL); if(resume==JOBDB_ERR_BUSY)pause_ms(2); } assert(resume==JOBDB_OK); assert(jobdb_execution_get(db, missing, &parked) == JOBDB_OK && parked.state == JOBDB_EXEC_READY); }
-     { jobdb_ledger_entry_t ledger; jobdb_execution_t completed; assert(jobdb_ledger_get(db, id, &ledger) == JOBDB_OK && ledger.final_state == JOBDB_EXEC_DONE); assert(jobdb_execution_get(db, id, &completed) == JOBDB_OK); assert(jobdb_execution_requeue_admin(db, id, completed.revision, NULL) == JOBDB_OK); assert(jobdb_execution_get(db, id, &completed) == JOBDB_OK && completed.state == JOBDB_EXEC_READY); assert(jobdb_ledger_get(db, id, &ledger) == JOBDB_OK && ledger.final_state == JOBDB_EXEC_DONE); assert(jobdb_execution_requeue_admin(db, id, completed.revision, NULL) == JOBDB_ERR_INVALID_ARGUMENT); }
+     { jobdb_ledger_entry_t ledger; jobdb_execution_t completed;
+       assert(jobdb_ledger_get(db,id,&ledger)==JOBDB_OK&&ledger.final_state==JOBDB_EXEC_DONE);
+       assert(jobcore_stop(core)==JOBDB_OK);assert(jobdb_execution_get(db,id,&completed)==JOBDB_OK);
+       assert(jobdb_execution_requeue_admin(db,id,completed.revision,NULL)==JOBDB_OK);
+       assert(jobdb_execution_get(db,id,&completed)==JOBDB_OK&&completed.state==JOBDB_EXEC_READY);
+       assert(jobdb_ledger_get(db,id,&ledger)==JOBDB_ERR_NOT_FOUND);
+       assert(jobdb_execution_requeue_admin(db,id,completed.revision,NULL)==JOBDB_ERR_INVALID_ARGUMENT);
+       assert(jobcore_start(core)==JOBDB_OK);wait_state(db,id,JOBDB_EXEC_DONE);
+       { jobdb_result_t lr=JOBDB_ERR_NOT_FOUND; unsigned retry; for(retry=0;retry<100&&lr==JOBDB_ERR_NOT_FOUND;++retry){lr=jobdb_ledger_get(db,id,&ledger);if(lr==JOBDB_ERR_NOT_FOUND)pause_ms(2);} assert(lr==JOBDB_OK&&ledger.final_state==JOBDB_EXEC_DONE); } }
      assert(handled >= 1);
     assert(jobcore_stop(core) == JOBDB_OK);
     jobcore_destroy(core); core = NULL;
