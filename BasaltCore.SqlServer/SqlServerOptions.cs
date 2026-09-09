@@ -11,6 +11,7 @@ public sealed class SqlServerOptions
     public string Schema { get => _schema; set => _schema = SqlIdentifier.Validate(value, nameof(value)); }
     public SchemaManagement SchemaManagement { get; set; } = SchemaManagement.AutoMigrate;
     public int CommandTimeoutSeconds { get; set; } = 30;
+    internal Func<bool>? SimulateLostCommitAcknowledgement { get; set; }
 }
 
 internal static class SqlIdentifier

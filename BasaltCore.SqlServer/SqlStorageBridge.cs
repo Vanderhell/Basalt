@@ -12,6 +12,7 @@ internal sealed class SqlStorageBridge : IDisposable
     private readonly SqlServerConnectionFactory _connections;
     private readonly string _schema;
     private readonly int _timeout;
+    private readonly Func<bool>? _lostCommitAcknowledgement;
     private readonly List<Delegate> _delegates = new();
     private GCHandle _self;
     private IntPtr _providerName;
@@ -21,7 +22,7 @@ internal sealed class SqlStorageBridge : IDisposable
     internal SqlStorageBridge(SqlServerConnectionFactory connections, SqlServerOptions options)
     {
         _connections=connections;_schema=SqlIdentifier.Quote(options.Schema);_timeout=options.CommandTimeoutSeconds;
-        _self=GCHandle.Alloc(this);_providerName=Marshal.StringToHGlobalAnsi("SqlServer");
+        _lostCommitAcknowledgement=options.SimulateLostCommitAcknowledgement;_self=GCHandle.Alloc(this);_providerName=Marshal.StringToHGlobalAnsi("SqlServer");
         var v=new VTable { AbiVersion=1,Capabilities=7,ProviderName=_providerName };
         Bind(ref v.Retain,new Lifetime(_=>{}));Bind(ref v.Release,new Lifetime(_=>{}));Bind(ref v.Health,new Health(HealthCallback));Bind(ref v.UtcNow,new Clock(ClockCallback));Bind(ref v.Allocate,new Allocate(AllocateCallback));
         Bind(ref v.RecordCreate,new RecordCreate(RecordCreateCallback));Bind(ref v.RecordGet,new RecordGet(RecordGetCallback));Bind(ref v.RecordFree,new RecordFree(RecordFreeCallback));Bind(ref v.ListIds,new ListIds(ListIdsCallback));
@@ -69,12 +70,14 @@ internal sealed class SqlStorageBridge : IDisposable
                 IncrementStats(db,tx,"Submitted");
                 try{tx.Commit();}
                 catch(SqlException){return JobDbResult.UnknownCommit;}
+                if(InternalCommitOutcomeLost())return JobDbResult.UnknownCommit;
                 return JobDbResult.Ok;
             }
             catch{try{tx.Rollback();}catch{}throw;}
         }
         catch(Exception ex){return Error(ex);}
     }
+    internal bool InternalCommitOutcomeLost()=>_lostCommitAcknowledgement?.Invoke()==true;
     private JobDbResult ReceiptGetCallback(IntPtr c,ulong id,IntPtr payload,uint capacity,out uint size){uint n=0;var r=Run(()=>{using var db=Open();using var cmd=Command(db,null,$"SELECT [Payload] FROM {_schema}.[Receipts] WHERE [ReceiptId]=@i");P(cmd,"@i",L(id));object? o=cmd.ExecuteScalar();if(o==null)return JobDbResult.NotFound;byte[] b=(byte[])o;n=(uint)b.Length;if(n>capacity)return JobDbResult.Limit;if(n!=0)Marshal.Copy(b,0,payload,b.Length);return JobDbResult.Ok;});size=n;return r;}
     private Execution ReadExecution(DbDataReader r)=>new(){Id=U(r[0]),JobType=U(r[1]),ScheduleId=U(r[2]),WorkflowId=U(r[3]),State=Convert.ToUInt32(r[4]),CreatedAt=Convert.ToInt64(r[5]),EligibleAt=Convert.ToInt64(r[6]),StartedAt=Convert.ToInt64(r[7]),FinishedAt=Convert.ToInt64(r[8]),Priority=Convert.ToInt32(r[9]),Attempt=Convert.ToUInt32(r[10]),MaxAttempts=Convert.ToUInt32(r[11]),Revision=U(r[12]),WorkerId=r.IsDBNull(13)?new byte[16]:(byte[])r[13],LeaseExpiresAt=Convert.ToInt64(r[14]),FencingToken=U(r[15])};
     private JobDbResult ExecutionGetCallback(IntPtr c,ulong id,out Execution execution){Execution e=default;var result=Run(()=>{using var db=Open();using var cmd=Command(db,null,$"SELECT * FROM {_schema}.[Executions] WHERE [ExecutionId]=@i");P(cmd,"@i",L(id));using var r=cmd.ExecuteReader();if(!r.Read())return JobDbResult.NotFound;e=ReadExecution(r);return JobDbResult.Ok;});execution=e;return result;}
