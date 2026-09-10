@@ -38,6 +38,12 @@ GRANT UPDATE
 
 Use `ValidateOnly` for this runtime identity. Do not grant it schema ownership, `ALTER`, `CONTROL`, or rights on unrelated application schemas unless the application independently requires them.
 
+### Restricted runtime verification
+
+`tests/BasaltPermissionSmoke` is a manual Windows-authentication verification for this model. Its `--migrate` mode must run under the migration identity; it creates a dedicated Basalt schema and grants only the permissions above to the runtime identity. Run the normal mode in a process started as that runtime Windows account. It verifies typed idempotent enqueue, retry, claim/completion, management reads, `ValidateOnly`, health, and denial of an attempted update to a foreign `dbo` sentinel table. Run `--cleanup` under the migration identity afterwards; it removes the dedicated schema and sentinel.
+
+The smoke does not require SQL authentication and never grants DDL rights to the runtime identity.
+
 ## Connections and workers
 
 Basalt creates, opens, and disposes its own SQL connections. Supply either a connection string or a factory returning a fresh `Microsoft.Data.SqlClient.SqlConnection`:

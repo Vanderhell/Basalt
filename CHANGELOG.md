@@ -12,6 +12,8 @@ This project follows [Semantic Versioning](https://semver.org/): incompatible pu
 - Typed jobs, durable retry and idempotent enqueue.
 - Durable schedules, static workflow DAGs, management, recovery, leases, and fencing.
 - Simplified managed API, SQL migration modes, and .NET Framework 4.7.2/WPF consumer support.
+- Dashboard and storage-neutral observability management API, including queue health, execution filters, stable management keys, worker heartbeat diagnostics, and SQL parity smoke tests.
+- Restricted Windows runtime-identity smoke test for `ValidateOnly` SQL deployments.
 
 ### Changed
 
