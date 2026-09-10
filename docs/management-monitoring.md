@@ -16,9 +16,9 @@ var failed = basalt.ListExecutions(new ExecutionQuery
 
 `GetHealth()` is non-destructive. `Healthy` means the provider health check succeeded and no failed, dead, or stale leased work was observed. `Degraded` indicates one of those queue conditions. `Unhealthy` means the provider health check could not be completed.
 
-`GetQueueStats()` returns current counts for every execution state. `GetStats()` returns durable cumulative totals: submitted, started, completed, failed, retried, cancelled, dead, and recovered.
+`GetQueueStats()` returns current counts for every execution state. SQL Server obtains these counts with a grouped provider query; Embedded obtains them through its storage-neutral Core management scan. `GetStats()` returns durable cumulative totals: submitted, started, completed, failed, retried, cancelled, dead, and recovered.
 
-`ListExecutions(ExecutionQuery)` provides bounded filtering by state, job definition, schedule, workflow, creation time, and execution-id pagination. `GetExecution(id)` exposes lifecycle timestamps, retry attempt, lease expiry, fencing token, and revision. `GetLedger(id)` describes a terminal result; it is not a retry-attempt history.
+`ListExecutions(ExecutionQuery)` provides bounded filtering by state, job definition, schedule, workflow, creation time, and execution-id pagination. SQL Server applies these filters in its provider query; Embedded applies them while paging durable execution IDs and does not materialize the full result set. `GetExecution(id)` exposes lifecycle timestamps, retry attempt, lease expiry, fencing token, and revision. `GetLedger(id)` describes a terminal result; it is not a retry-attempt history.
 
 Stable job, schedule, and workflow keys are stored by Basalt as management metadata when they are registered or created. Existing stores created before this feature may show an ID until that key is registered or created again.
 

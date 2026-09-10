@@ -68,6 +68,9 @@ public sealed class ExecutionQuery
 /// <summary>Current, non-cumulative execution counts grouped by durable state.</summary>
 public sealed class BasaltQueueStats
 {
+    public BasaltQueueStats(ulong created = 0, ulong scheduled = 0, ulong ready = 0, ulong leased = 0, ulong running = 0,
+        ulong retry = 0, ulong blocked = 0, ulong done = 0, ulong failed = 0, ulong dead = 0, ulong cancelled = 0, ulong paused = 0)
+    { Created=created; Scheduled=scheduled; Ready=ready; Leased=leased; Running=running; Retry=retry; Blocked=blocked; Done=done; Failed=failed; Dead=dead; Cancelled=cancelled; Paused=paused; }
     public ulong Created { get; internal set; } public ulong Scheduled { get; internal set; } public ulong Ready { get; internal set; }
     public ulong Leased { get; internal set; } public ulong Running { get; internal set; } public ulong Retry { get; internal set; }
     public ulong Blocked { get; internal set; } public ulong Done { get; internal set; } public ulong Failed { get; internal set; }

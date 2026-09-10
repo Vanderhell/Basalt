@@ -20,10 +20,19 @@ try
         await basalt.EveryAsync("diagnostics.schedule", TimeSpan.FromMinutes(5), new ProbeJob(2));
         var schedules = basalt.ListSchedules();
         Require(schedules.Count == 1 && schedules[0].ScheduleKey == "diagnostics.schedule", "Schedule list did not return the stable schedule key.");
+        basalt.PauseSchedule(schedules[0].ScheduleId);
+        Require(!basalt.GetSchedule(schedules[0].ScheduleId).Enabled, "Pause management action did not persist.");
+        basalt.ResumeSchedule(schedules[0].ScheduleId);
+        Require(basalt.GetSchedule(schedules[0].ScheduleId).Enabled, "Resume management action did not persist.");
 
         await basalt.Workflow("diagnostics.workflow").Add("first", new ProbeJob(3)).Then("second", new ProbeJob(4)).SubmitAsync();
         var workflows = basalt.ListWorkflows();
         Require(workflows.Count == 1 && workflows[0].WorkflowKey == "diagnostics.workflow" && workflows[0].NodeCount == 2, "Workflow list did not return the submitted workflow.");
+        Require(basalt.ListExecutions(new ExecutionQuery { WorkflowId = workflows[0].WorkflowId, Take = 10 }).Count == 2, "Workflow execution filter did not return workflow nodes.");
+        Require(basalt.ListExecutions(new ExecutionQuery { JobDefinitionId = page[0].JobDefinitionId, Take = 10 }).Count >= 1, "Job execution filter did not return the registered job.");
+        Require(basalt.ListExecutions(new ExecutionQuery { CreatedFrom = DateTimeOffset.UtcNow.AddMinutes(1), Take = 10 }).Count == 0, "Creation time filter did not exclude older work.");
+        var first = basalt.ListExecutions(new ExecutionQuery { Take = 1 }).Single();
+        Require(basalt.ListExecutions(new ExecutionQuery { AfterExecutionId = first.ExecutionId, Take = 10 }).Count >= 1, "Execution pagination did not advance after the first ID.");
 
         var health = basalt.GetHealth();
         Require(health.Status == BasaltHealthStatus.Healthy && health.Provider == "Embedded", "Embedded health snapshot is not healthy.");

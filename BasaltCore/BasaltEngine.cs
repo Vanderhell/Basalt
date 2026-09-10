@@ -137,12 +137,25 @@ public sealed class BasaltEngine : IDisposable
     {
         if (query == null) throw new ArgumentNullException(nameof(query));
         if (query.Take < 1 || query.Take > 1000) throw new ArgumentOutOfRangeException(nameof(query.Take));
-        return ListAllExecutions().Where(x => x.ExecutionId > query.AfterExecutionId && query.Matches(x)).Take(query.Take).ToArray();
+        if (_database == null) return _storage!.ListExecutions(query);
+        var result = new List<BasaltExecutionInfo>(query.Take);
+        foreach (ulong id in ListExecutionIds().Where(x => x > query.AfterExecutionId).OrderBy(x => x))
+        {
+            try
+            {
+                var value = GetExecution(id);
+                if (query.Matches(value)) result.Add(value);
+            }
+            catch (BasaltException error) when (error.Result == JobDbResult.NotFound) { }
+            if (result.Count == query.Take) break;
+        }
+        return result;
     }
 
     /// <summary>Gets current execution counts by state without exposing storage internals.</summary>
     public BasaltQueueStats GetQueueStats()
     {
+        if (_database == null) return _storage!.GetQueueStats();
         var result = new BasaltQueueStats();
         foreach (var execution in ListAllExecutions()) result.Add(execution.State);
         return result;

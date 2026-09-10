@@ -8,6 +8,8 @@ public abstract class BasaltStorage : IDisposable
     public abstract string ProviderName { get; }
     public virtual BasaltExecutionInfo GetExecution(ulong executionId)=>throw new NotSupportedException($"{ProviderName} does not expose execution management.");
     public virtual IReadOnlyList<BasaltExecutionInfo> ListExecutions(int take=100,ulong afterExecutionId=0)=>throw new NotSupportedException($"{ProviderName} does not expose execution management.");
+    public virtual IReadOnlyList<BasaltExecutionInfo> ListExecutions(ExecutionQuery query)=>throw new NotSupportedException($"{ProviderName} does not expose filtered execution management.");
+    public virtual BasaltQueueStats GetQueueStats()=>throw new NotSupportedException($"{ProviderName} does not expose queue statistics.");
     public virtual BasaltStats GetStats()=>throw new NotSupportedException($"{ProviderName} does not expose statistics.");
     public virtual BasaltLedgerEntry GetLedger(ulong executionId)=>throw new NotSupportedException($"{ProviderName} does not expose ledger management.");
     public virtual void Cancel(ulong executionId,ulong expectedRevision)=>throw new NotSupportedException($"{ProviderName} does not expose execution management.");
