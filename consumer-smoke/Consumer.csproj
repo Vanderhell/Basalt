@@ -8,6 +8,7 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Basalt" Version="1.0.0-rc.4" />
+    <ProjectReference Include="..\BasaltCore\BasaltCore.csproj" />
+    <ProjectReference Include="..\BasaltCore.SqlServer\BasaltCore.SqlServer.csproj" />
   </ItemGroup>
 </Project>

@@ -9,6 +9,6 @@
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Basalt" Version="1.0.0-rc.4" />
+    <ProjectReference Include="..\BasaltCore\BasaltCore.csproj" />
   </ItemGroup>
 </Project>

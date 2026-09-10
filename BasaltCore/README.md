@@ -10,17 +10,14 @@ not manage native handles.
 Use the same typed API with either embedded storage or SQL Server:
 
 ```csharp
-using var app = Basalt.Create(o => o.UseEmbedded(@"C:\data\jobs"));
-// Add Basalt.SqlServer and use o.UseSqlServer(connectionString,
+using var app = Basalt.Embedded(@"C:\data\jobs");
+// Add Basalt.SqlServer and use Basalt.SqlServer(connectionString,
 //     sql => { sql.Schema = "MyApp_Basalt"; }); for a shared durable store.
 
-app.RegisterHandler<SendInvoice>("billing.send", async (job, context, ct) =>
+app.On<SendInvoice>("billing.send", async (job, context, ct) =>
     await SendIdempotently(job, context.ExecutionId, ct));
 
-await app.EnqueueAsync("billing.send", new SendInvoice(), new EnqueueOptions {
-    IdempotencyKey = "invoice:123",
-    Retry = RetryOptions.Exponential(5, TimeSpan.FromSeconds(2))
-});
+await app.EnqueueAsync(new SendInvoice(), key: "invoice:123", retry: 5);
 await app.ScheduleAsync("nightly", new SendInvoice(), s =>
     s.Cron("0 2 * * *").InTimeZone("Central Europe Standard Time"));
 await app.Workflow("invoice-flow").Add("send", new SendInvoice())

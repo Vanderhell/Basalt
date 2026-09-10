@@ -1,53 +1,121 @@
 using BasaltCore;
+using BasaltCore.SqlServer;
 
-var path = Path.Combine(Path.GetTempPath(), "basalt-consumer-" + Guid.NewGuid().ToString("N"));
-var backup = path + "-backup";
-var jobType = JobKeyFor("consumer.job");
+string root = Path.Combine(Path.GetTempPath(), "basalt-simplified-api-" + Guid.NewGuid().ToString("N"));
 try
 {
-    using (var database = BasaltDatabase.OpenOrCreate(path))
-    using (var engine = new BasaltEngine(database))
+    await RunScenario(() => Basalt.Embedded(root), "Embedded");
+
+    string? sqlConnection = Environment.GetEnvironmentVariable("BASALT_SQL_CONNECTION");
+    if (!string.IsNullOrWhiteSpace(sqlConnection))
     {
-        engine.RegisterRawHandler(jobType, (payload, version) => 0);
-        engine.Start();
-        var id = await engine.EnqueueAsync("consumer-idempotency", jobType, new byte[] { 1, 2, 3 }, 1, 1);
-        var same = await engine.EnqueueAsync("consumer-idempotency", jobType, new byte[] { 1, 2, 3 }, 1, 1);
-        if (id != same) throw new Exception("idempotency receipt mismatch");
-        _ = await engine.EnqueueRetryAsync(jobType, new byte[] { 4 }, 1, 2, 1);
-        engine.CreateSchedule(9001, jobType, 2, DateTimeOffset.UtcNow.AddMinutes(5), TimeSpan.Zero, 1, 1, new byte[] { 5 });
-        _ = engine.GetSchedule(9001);
-        _ = engine.ListScheduleIds();
-        var scheduleRevision = engine.GetSchedule(9001).Revision;
-        engine.PauseSchedule(9001, scheduleRevision);
-        engine.ResumeSchedule(9001, engine.GetSchedule(9001).Revision);
-        engine.RemoveSchedule(9001, engine.GetSchedule(9001).Revision);
-        engine.SubmitWorkflow(9100, new[] { new BasaltWorkflowNode { NodeId = 1, JobType = jobType, Payload = new byte[] { 6 } } });
-        _ = engine.GetWorkflow(9100);
-        engine.CancelWorkflow(9100);
-        var info = engine.GetExecution(id);
-        if (info.State == 0) throw new Exception("execution inspection failed");
-        for (var i = 0; i < 250 && engine.GetExecution(id).State < 7; i++) await Task.Delay(20);
-        if (engine.GetExecution(id).State == 7 && engine.ListLedgerExecutionIds().Contains(id) && engine.GetLedger(id).FinalState != 7) throw new Exception("ledger inspection failed");
-        _ = engine.GetStats();
-        _ = engine.ListExecutionIds();
-        _ = engine.ListLedgerExecutionIds();
-        _ = engine.ListScheduleIds();
-        engine.VerifyHealth();
-        engine.Stop();
-        database.Backup(backup);
+        string schema = Environment.GetEnvironmentVariable("BASALT_SQL_SCHEMA") ?? "BasaltApiSmoke";
+        await RunScenario(() => Basalt.SqlServer(sqlConnection, sql =>
+        {
+            sql.Schema = schema;
+            sql.SchemaManagement = SchemaManagement.AutoMigrate;
+        }), "SQL Server");
     }
-    BasaltDatabase.Verify(backup);
-    Console.WriteLine("clean NuGet consumer passed");
 }
 finally
 {
-    if (Directory.Exists(path)) Directory.Delete(path, true);
-    if (Directory.Exists(backup)) Directory.Delete(backup, true);
+    if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
 }
 
-static ulong JobKeyFor(string value)
+static async Task RunScenario(Func<BasaltApplication> create, string provider)
 {
-    ulong hash = 1469598103934665603UL;
-    foreach (var b in System.Text.Encoding.UTF8.GetBytes(value)) { hash ^= b; hash *= 1099511628211UL; }
-    return hash == 0 ? 1 : hash;
+    int attempts = 0;
+    ulong durableId;
+    using (var basalt = create())
+    {
+        basalt.On<SmokeJob>("smoke.job", (job, context, ct) => Task.CompletedTask);
+        basalt.On<RetryJob>("smoke.retry", (job, context, ct) =>
+        {
+            if (Interlocked.Increment(ref attempts) == 1) throw new InvalidOperationException("expected first-attempt failure");
+            return Task.CompletedTask;
+        });
+
+        durableId = await basalt.EnqueueAsync(new SmokeJob { Value = 1 }, key: provider + ":durable");
+        ulong sameId = await basalt.EnqueueAsync(new SmokeJob { Value = 1 }, key: provider + ":durable");
+        if (sameId != durableId) throw new Exception(provider + " idempotency mismatch");
+
+        ulong cancelled = await basalt.EnqueueAsync(new SmokeJob { Value = 2 });
+        basalt.Cancel(cancelled);
+        if (basalt.GetExecution(cancelled).State != ExecutionState.Cancelled) throw new Exception(provider + " cancel failed");
+        basalt.Requeue(cancelled);
+        if (basalt.GetExecution(cancelled).State != ExecutionState.Ready) throw new Exception(provider + " requeue failed before start");
+
+        ulong retryId = await basalt.EnqueueAsync(new RetryJob(), retry: 2);
+
+        await basalt.EveryAsync("interval", TimeSpan.FromHours(1), new SmokeJob());
+        basalt.Pause("interval");
+        basalt.Resume("interval");
+        basalt.Remove("interval");
+        await basalt.DailyAsync("daily", 2, 0, new SmokeJob(), "UTC");
+        basalt.Remove("daily");
+        await basalt.AtAsync("once", DateTimeOffset.UtcNow.AddHours(1), new SmokeJob());
+        basalt.Remove("once");
+
+        await basalt.Workflow("smoke-flow")
+            .Add("first", new SmokeJob { Value = 3 })
+            .Then("second", new SmokeJob { Value = 4 })
+            .SubmitAsync();
+
+        await basalt.StartAsync();
+        await WaitForTerminal(basalt, durableId);
+        await WaitForTerminal(basalt, cancelled);
+        await WaitForTerminal(basalt, retryId);
+        await basalt.StopAsync();
+
+        if (attempts != 2 || basalt.GetExecution(retryId).State != ExecutionState.Done)
+            throw new Exception(provider + " retry failed");
+        if (basalt.ListExecutions().Count == 0 || basalt.GetWorkflow("smoke-flow").NodeCount != 2)
+            throw new Exception(provider + " management failed");
+        _ = basalt.GetStats();
+        _ = basalt.GetLedger(durableId);
+        basalt.VerifyHealth();
+    }
+
+    using (var reopened = create())
+    {
+        reopened.On<SmokeJob>("smoke.job", (job, context, ct) => Task.CompletedTask);
+        reopened.On<RetryJob>("smoke.retry", (job, context, ct) => Task.CompletedTask);
+        if (reopened.GetExecution(durableId).State != ExecutionState.Done)
+            throw new Exception(provider + " reopen lost durable execution");
+        await reopened.StartAsync();
+        await reopened.StopAsync();
+    }
+
+    Console.WriteLine(provider + " simplified public API passed");
+}
+
+static async Task WaitForTerminal(BasaltApplication basalt, ulong id)
+{
+    for (int i = 0; i < 300; i++)
+    {
+        BasaltExecutionInfo? execution = basalt.ListExecutions().FirstOrDefault(item => item.ExecutionId == id);
+        if (execution != null && execution.State is ExecutionState.Done or ExecutionState.Failed or ExecutionState.Dead or ExecutionState.Cancelled) return;
+        await Task.Delay(25);
+    }
+    throw new TimeoutException("Execution did not reach a terminal state: " + id);
+}
+
+public sealed class SmokeJob { public int Value { get; set; } }
+public sealed class RetryJob { }
+
+// Compile-only coverage for retained long-form and connection-factory APIs.
+static class CompatibilitySurface
+{
+    public static async Task Compile(string path, string connectionString)
+    {
+        using var embedded = Basalt.Create(options => options.UseEmbedded(path));
+        embedded.RegisterHandler<SmokeJob>("compat.job", (job, context, ct) => Task.CompletedTask);
+        await embedded.EnqueueAsync("compat.job", new SmokeJob(), new EnqueueOptions());
+        embedded.PauseSchedule("compat.schedule");
+        embedded.ResumeSchedule("compat.schedule");
+        embedded.RemoveSchedule("compat.schedule");
+
+        using var sql = Basalt.Create(options => options.UseSqlServer(connectionString));
+        using var factory = Basalt.SqlServer(() => new Microsoft.Data.SqlClient.SqlConnection(connectionString));
+    }
 }

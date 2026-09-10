@@ -1,9 +1,52 @@
+using System.Data.Common;
+using System.Reflection;
+using System.Runtime.ExceptionServices;
+using BasaltCore.SqlServer;
+
 namespace BasaltCore;
 
 public static class Basalt
 {
+    /// <summary>Opens or creates a local durable Basalt store.</summary>
+    public static BasaltApplication Embedded(string path) => Create(options => options.UseEmbedded(path));
+
+    /// <summary>Opens SQL Server-backed Basalt storage. Basalt creates and owns its connections.</summary>
+    public static BasaltApplication SqlServer(string connectionString, Action<SqlServerOptions>? configure = null)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString))
+            throw new ArgumentException("A SQL Server connection string is required.", nameof(connectionString));
+        return InvokeSqlProvider("CreateFromConnectionString", connectionString, configure);
+    }
+
+    /// <summary>Opens SQL Server-backed storage using a factory that returns a new connection per operation.</summary>
+    public static BasaltApplication SqlServer(Func<DbConnection> connectionFactory, Action<SqlServerOptions>? configure = null)
+    {
+        if (connectionFactory == null) throw new ArgumentNullException(nameof(connectionFactory));
+        return InvokeSqlProvider("CreateFromFactory", connectionFactory, configure);
+    }
+
     public static BasaltApplication Create(Action<BasaltConfiguration> configure)
     {if(configure==null)throw new ArgumentNullException(nameof(configure));var c=new BasaltConfiguration();configure(c);return c.Build();}
+
+    private static BasaltApplication InvokeSqlProvider(string methodName, object firstArgument, Action<SqlServerOptions>? configure)
+    {
+        try
+        {
+            Assembly provider = Assembly.Load(new AssemblyName("BasaltCore.SqlServer"));
+            Type bootstrap = provider.GetType("BasaltCore.SqlServer.SqlServerBootstrap", throwOnError: true)!;
+            MethodInfo method = bootstrap.GetMethod(methodName, BindingFlags.Public | BindingFlags.Static)!;
+            return (BasaltApplication)method.Invoke(null, new[] { firstArgument, configure })!;
+        }
+        catch (TargetInvocationException error) when (error.InnerException != null)
+        {
+            ExceptionDispatchInfo.Capture(error.InnerException).Throw();
+            throw;
+        }
+        catch (Exception error) when (error is FileNotFoundException || error is TypeLoadException || error is MissingMethodException)
+        {
+            throw new InvalidOperationException("Reference the Basalt.SqlServer package before calling Basalt.SqlServer(...).", error);
+        }
+    }
 }
 
 public sealed class BasaltConfiguration
@@ -16,25 +59,49 @@ public sealed class BasaltConfiguration
     internal BasaltApplication Build(){if(_embeddedPath!=null){var db=BasaltDatabase.OpenOrCreate(_embeddedPath);try{return new BasaltApplication(new BasaltEngine(db,_engine),db);}catch{db.Dispose();throw;}}if(_storage!=null){var s=_storage();try{return new BasaltApplication(new BasaltEngine(s,_engine),s);}catch{s.Dispose();throw;}}throw new InvalidOperationException("Configure UseEmbedded or a storage provider.");}
 }
 
+/// <summary>Provides the storage-neutral typed job, scheduling, workflow, management, and explicit worker lifecycle API.</summary>
 public sealed class BasaltApplication : IDisposable
 {
     internal interface IRegistration{string Key{get;}ulong Type{get;}byte[] Serialize(object value);uint Version{get;}}
     private sealed class Registration<T> : IRegistration{internal readonly IJobSerializer<T> Serializer;public string Key{get;}public ulong Type{get;}public uint Version=>Serializer.Version;internal Registration(string key,IJobSerializer<T>s){Key=key;Type=JobKey.Hash(key);Serializer=s;}public byte[] Serialize(object value)=>Serializer.Serialize((T)value);}
     private readonly BasaltEngine _engine; private readonly IDisposable _ownedStorage; private readonly Dictionary<Type,IRegistration> _registrations=new(); private int _disposed;
     internal BasaltApplication(BasaltEngine engine,IDisposable ownedStorage){_engine=engine;_ownedStorage=ownedStorage;}
+    /// <summary>Registers a handler under an explicit stable durable key. The key must remain stable when the CLR type is renamed.</summary>
+    public BasaltApplication On<T>(string stableKey,Func<T,JobContext,CancellationToken,Task> handler,IJobSerializer<T>? serializer=null){RegisterHandler(stableKey,handler,serializer);return this;}
     public void RegisterHandler<T>(string stableKey,Func<T,JobContext,CancellationToken,Task> handler,IJobSerializer<T>? serializer=null){ThrowIfDisposed();serializer??=new DataContractJobSerializer<T>();_engine.RegisterHandler(stableKey,handler,serializer);_registrations[typeof(T)]=new Registration<T>(stableKey,serializer);}
+    /// <summary>Starts workers that claim and execute registered durable jobs.</summary>
     public Task StartAsync(CancellationToken cancellationToken=default){ThrowIfDisposed();return _engine.StartAsync(cancellationToken);}
+    /// <summary>Stops workers using the configured graceful-stop behavior.</summary>
     public Task StopAsync(CancellationToken cancellationToken=default){ThrowIfDisposed();return _engine.StopAsync(cancellationToken);}
     public Task<ulong> EnqueueAsync<T>(string stableKey,T job,EnqueueOptions? options=null,CancellationToken cancellationToken=default){ThrowIfDisposed();options??=new EnqueueOptions();options.Validate();IJobSerializer<T> serializer=_registrations.TryGetValue(typeof(T),out var r)&&r is Registration<T> typed?typed.Serializer:new DataContractJobSerializer<T>();byte[] payload=serializer.Serialize(job!);ulong type=JobKey.Hash(stableKey);if(options.Retry.Policy!=RetryPolicy.None){if(options.IdempotencyKey!=null)return _engine.EnqueueIdempotentRetryAsync(options.IdempotencyKey,type,payload,(uint)options.Retry.Policy,options.Retry.MaxAttempts,(long)options.Retry.InitialDelay.TotalSeconds,(long)options.Retry.MaxDelay.TotalSeconds,options.Retry.BackoffFactor,(uint)options.Retry.Jitter.TotalSeconds,serializer.Version,cancellationToken);return _engine.EnqueueRetryAsync(type,payload,(uint)options.Retry.Policy,options.Retry.MaxAttempts,(long)options.Retry.InitialDelay.TotalSeconds,(long)options.Retry.MaxDelay.TotalSeconds,options.Retry.BackoffFactor,(uint)options.Retry.Jitter.TotalSeconds,serializer.Version,cancellationToken);}if(options.IdempotencyKey!=null)return _engine.EnqueueAsync(options.IdempotencyKey,type,payload,serializer.Version,options.Retry.MaxAttempts,cancellationToken);return _engine.EnqueueAsync(type,payload,serializer.Version,options.Retry.MaxAttempts,cancellationToken);}
+    /// <summary>Durably enqueues a job using the stable key registered for <typeparamref name="T"/>.</summary>
+    public Task<ulong> EnqueueAsync<T>(T job,CancellationToken cancellationToken=default)=>EnqueueRegisteredAsync(job,new EnqueueOptions(),cancellationToken);
+    /// <summary>Durably enqueues a registered job with advanced options.</summary>
+    public Task<ulong> EnqueueAsync<T>(T job,EnqueueOptions options,CancellationToken cancellationToken=default)=>EnqueueRegisteredAsync(job,options??throw new ArgumentNullException(nameof(options)),cancellationToken);
+    /// <summary>Durably enqueues a registered job with an idempotency key and optional exponential retry attempts.</summary>
+    public Task<ulong> EnqueueAsync<T>(T job,string? key,int retry=1,CancellationToken cancellationToken=default)=>EnqueueRegisteredAsync(job,ConvenienceOptions(key,retry),cancellationToken);
+    /// <summary>Durably enqueues a registered job with the specified total number of exponential retry attempts.</summary>
+    public Task<ulong> EnqueueAsync<T>(T job,int retry,CancellationToken cancellationToken=default)=>EnqueueRegisteredAsync(job,ConvenienceOptions(null,retry),cancellationToken);
+    private Task<ulong> EnqueueRegisteredAsync<T>(T job,EnqueueOptions options,CancellationToken cancellationToken){ThrowIfDisposed();if(!_registrations.TryGetValue(typeof(T),out var registration))throw new InvalidOperationException($"Register {typeof(T).Name} with On<{typeof(T).Name}>(\"stable.job.key\", handler) before enqueueing it.");return EnqueueAsync(registration.Key,job,options,cancellationToken);}
+    private static EnqueueOptions ConvenienceOptions(string? key,int retry){if(retry<1)throw new ArgumentOutOfRangeException(nameof(retry),"Retry attempts must be at least one.");return new EnqueueOptions{IdempotencyKey=key,Retry=retry==1?RetryOptions.None:RetryOptions.Exponential((uint)retry,TimeSpan.FromSeconds(1),TimeSpan.FromMinutes(1))};}
+    /// <summary>Creates a durable schedule using the full fluent schedule configuration.</summary>
     public Task ScheduleAsync<T>(string stableScheduleKey,T job,Action<ScheduleBuilder> configure,CancellationToken cancellationToken=default){ThrowIfDisposed();cancellationToken.ThrowIfCancellationRequested();if(!_registrations.TryGetValue(typeof(T),out var registration))throw new InvalidOperationException($"Register a stable handler and serializer for {typeof(T).Name} before scheduling it.");var b=new ScheduleBuilder();configure?.Invoke(b);b.Validate();byte[] payload=registration.Serialize(job!);_engine.CreateSchedule(JobKey.Hash("schedule:"+stableScheduleKey),registration.Type,(uint)b.Type,b.FirstFireAt,b.Interval,(uint)b.IntervalMode,b.MaxOccurrences,payload,registration.Version,b.CronExpression,b.TimeZoneId,(uint)b.MisfirePolicy,(uint)b.OverlapPolicy,b.CatchUpMax,b.EndAt);return Task.CompletedTask;}
+    /// <summary>Creates a durable recurring interval schedule.</summary>
+    public Task EveryAsync<T>(string stableScheduleKey,TimeSpan interval,T job,IntervalMode mode=IntervalMode.FixedRate,CancellationToken cancellationToken=default)=>ScheduleAsync(stableScheduleKey,job,s=>s.Every(interval,mode),cancellationToken);
+    /// <summary>Creates a durable daily schedule. The default timezone is explicitly UTC.</summary>
+    public Task DailyAsync<T>(string stableScheduleKey,int hour,int minute,T job,string timeZoneId="UTC",CancellationToken cancellationToken=default)=>ScheduleAsync(stableScheduleKey,job,s=>s.DailyAt(hour,minute).InTimeZone(timeZoneId),cancellationToken);
+    /// <summary>Creates a durable one-off schedule with an explicit stable management key.</summary>
+    public Task AtAsync<T>(string stableScheduleKey,DateTimeOffset when,T job,CancellationToken cancellationToken=default)=>ScheduleAsync(stableScheduleKey,job,s=>s.OnceAt(when),cancellationToken);
+    /// <summary>Begins a strongly typed static durable workflow DAG with a stable management key.</summary>
     public WorkflowBuilder Workflow(string stableWorkflowKey){ThrowIfDisposed();return new WorkflowBuilder(this,stableWorkflowKey);}
     internal IRegistration RegistrationFor(Type type)=>_registrations.TryGetValue(type,out var r)?r:throw new InvalidOperationException($"Register a handler for {type.Name} before adding it to a workflow.");
     internal void Submit(string key,List<WorkflowBuilder.Node> nodes,DependencyPolicy policy){var raw=new List<BasaltWorkflowNode>(nodes.Count);foreach(var n in nodes){var r=RegistrationFor(n.Value.GetType());raw.Add(new BasaltWorkflowNode{NodeId=n.Id,JobType=r.Type,Payload=r.Serialize(n.Value),PayloadVersion=r.Version,Dependencies=n.Dependencies.ToArray()});}_engine.SubmitWorkflow(JobKey.Hash("workflow:"+key),raw,(BasaltDependencyPolicy)policy);}
-    public BasaltExecutionInfo GetExecution(ulong id)=>_engine.GetExecution(id);public IReadOnlyList<BasaltExecutionInfo> ListExecutions(int take=100,ulong afterExecutionId=0)=>_engine.ListExecutions(take,afterExecutionId);public BasaltStats GetStats()=>_engine.GetStats();public BasaltLedgerEntry GetLedger(ulong id)=>_engine.GetLedger(id);public void Cancel(ulong id)=>_engine.Cancel(id);public void Requeue(ulong id)=>_engine.Requeue(id);public BasaltScheduleInfo GetSchedule(ulong id)=>_engine.GetSchedule(id);public BasaltScheduleInfo GetSchedule(string key)=>_engine.GetSchedule(JobKey.Hash("schedule:"+key));public void PauseSchedule(string key)=>_engine.PauseSchedule(JobKey.Hash("schedule:"+key));public void ResumeSchedule(string key)=>_engine.ResumeSchedule(JobKey.Hash("schedule:"+key));public void RemoveSchedule(string key)=>_engine.RemoveSchedule(JobKey.Hash("schedule:"+key)); public BasaltWorkflowStatus GetWorkflow(ulong id)=>_engine.GetWorkflow(id);public BasaltWorkflowStatus GetWorkflow(string key)=>_engine.GetWorkflow(JobKey.Hash("workflow:"+key));public void VerifyHealth()=>_engine.VerifyHealth();
+    public BasaltExecutionInfo GetExecution(ulong id)=>_engine.GetExecution(id);public IReadOnlyList<BasaltExecutionInfo> ListExecutions(int take=100,ulong afterExecutionId=0)=>_engine.ListExecutions(take,afterExecutionId);public BasaltStats GetStats()=>_engine.GetStats();public BasaltLedgerEntry GetLedger(ulong id)=>_engine.GetLedger(id);public void Cancel(ulong id)=>_engine.Cancel(id);public void Requeue(ulong id)=>_engine.Requeue(id);public BasaltScheduleInfo GetSchedule(ulong id)=>_engine.GetSchedule(id);public BasaltScheduleInfo GetSchedule(string key)=>_engine.GetSchedule(JobKey.Hash("schedule:"+key));public void Pause(string key)=>PauseSchedule(key);public void Resume(string key)=>ResumeSchedule(key);public void Remove(string key)=>RemoveSchedule(key);public void PauseSchedule(string key)=>_engine.PauseSchedule(JobKey.Hash("schedule:"+key));public void ResumeSchedule(string key)=>_engine.ResumeSchedule(JobKey.Hash("schedule:"+key));public void RemoveSchedule(string key)=>_engine.RemoveSchedule(JobKey.Hash("schedule:"+key)); public BasaltWorkflowStatus GetWorkflow(ulong id)=>_engine.GetWorkflow(id);public BasaltWorkflowStatus GetWorkflow(string key)=>_engine.GetWorkflow(JobKey.Hash("workflow:"+key));public void VerifyHealth()=>_engine.VerifyHealth();
     public void Dispose(){if(Interlocked.Exchange(ref _disposed,1)!=0)return;_engine.Dispose();_ownedStorage.Dispose();GC.SuppressFinalize(this);}private void ThrowIfDisposed(){if(Volatile.Read(ref _disposed)!=0)throw new ObjectDisposedException(nameof(BasaltApplication));}
 }
 
 public enum RetryPolicy:uint{None=0,Fixed=1,Linear=2,Exponential=3,ExponentialWithJitter=4}
+/// <summary>Defines the durable retry policy persisted with an execution.</summary>
 public sealed class RetryOptions
 {
     public RetryPolicy Policy{get;}public uint MaxAttempts{get;}public TimeSpan InitialDelay{get;}public TimeSpan MaxDelay{get;}public double BackoffFactor{get;}public TimeSpan Jitter{get;}
@@ -46,10 +113,12 @@ public sealed class RetryOptions
     public static RetryOptions ExponentialWithJitter(uint attempts,TimeSpan delay,TimeSpan jitter,TimeSpan? max=null,double factor=2)=>new(RetryPolicy.ExponentialWithJitter,attempts,delay,max??TimeSpan.Zero,factor,jitter);
     internal void Validate(){if(!Enum.IsDefined(typeof(RetryPolicy),Policy)||MaxAttempts==0||InitialDelay<TimeSpan.Zero||MaxDelay<TimeSpan.Zero||Jitter<TimeSpan.Zero||Jitter>TimeSpan.FromDays(1)||double.IsNaN(BackoffFactor)||BackoffFactor<1)throw new ArgumentOutOfRangeException(nameof(RetryOptions));}
 }
+/// <summary>Provides advanced enqueue configuration including idempotency and durable retry.</summary>
 public sealed class EnqueueOptions{public RetryOptions Retry{get;set;}=RetryOptions.None;public string? IdempotencyKey{get;set;}internal void Validate(){Retry=(Retry??throw new ArgumentNullException(nameof(Retry))).AlsoValidate();if(IdempotencyKey!=null&&string.IsNullOrWhiteSpace(IdempotencyKey))throw new ArgumentException("IdempotencyKey cannot be blank.");}}
 internal static class RetryValidation{internal static RetryOptions AlsoValidate(this RetryOptions value){value.Validate();return value;}}
 
 public enum ScheduleType:uint{Immediate=1,Delayed=2,Absolute=3,Interval=4,Cron=5} public enum IntervalMode:uint{FixedRate=1,FixedDelay=2} public enum MisfirePolicy:uint{Skip=1,RunOnce=2,RunLast=3,CatchUpAll=4} public enum OverlapPolicy:uint{Allow=1,Skip=2,QueueOne=3,QueueAll=4}
+/// <summary>Configures advanced durable schedule timing, timezone, misfire, overlap, and occurrence behavior.</summary>
 public sealed class ScheduleBuilder
 {
     internal ScheduleType Type{get;private set;}=ScheduleType.Immediate;internal DateTimeOffset FirstFireAt{get;private set;}=DateTimeOffset.UtcNow;internal DateTimeOffset? EndAt{get;private set;}internal TimeSpan Interval{get;private set;}internal IntervalMode IntervalMode{get;private set;}=IntervalMode.FixedRate;internal ulong MaxOccurrences{get;private set;}internal string? CronExpression{get;private set;}internal string? TimeZoneId{get;private set;}internal MisfirePolicy MisfirePolicy{get;private set;}=MisfirePolicy.RunOnce;internal OverlapPolicy OverlapPolicy{get;private set;}=OverlapPolicy.Allow;internal uint CatchUpMax{get;private set;}
@@ -58,6 +127,7 @@ public sealed class ScheduleBuilder
 }
 
 public enum DependencyPolicy:uint{Block=1,Cancel=2,Continue=3,FailWorkflow=4}
+/// <summary>Builds a static durable workflow DAG from registered typed jobs.</summary>
 public sealed class WorkflowBuilder
 {
     internal sealed class Node{internal string Name="";internal ulong Id;internal object Value=null!;internal List<ulong> Dependencies=new();}

@@ -7,9 +7,9 @@ public sealed class SqlServerStorage : BasaltStorage
     private int _references=1;
     private int _disposeRequested;
     private SqlServerStorage(SqlStorageBridge bridge)=>_bridge=bridge;
-    protected override IntPtr DangerousHandle=>_bridge?.Handle??throw new ObjectDisposedException(nameof(SqlServerStorage));
-    protected override void RetainManaged(){lock(this){if(_disposeRequested!=0)throw new ObjectDisposedException(nameof(SqlServerStorage));checked{_references++;}}}
-    protected override void ReleaseManaged(){SqlStorageBridge? release=null;lock(this){if(--_references==0)release=Interlocked.Exchange(ref _bridge,null);}release?.Dispose();}
+    protected internal override IntPtr DangerousHandle=>_bridge?.Handle??throw new ObjectDisposedException(nameof(SqlServerStorage));
+    protected internal override void RetainManaged(){lock(this){if(_disposeRequested!=0)throw new ObjectDisposedException(nameof(SqlServerStorage));checked{_references++;}}}
+    protected internal override void ReleaseManaged(){SqlStorageBridge? release=null;lock(this){if(--_references==0)release=Interlocked.Exchange(ref _bridge,null);}release?.Dispose();}
     public override string ProviderName=>"SqlServer";
     public override BasaltExecutionInfo GetExecution(ulong executionId)=>Bridge.ManagementGetExecution(executionId);
     public override IReadOnlyList<BasaltExecutionInfo> ListExecutions(int take=100,ulong afterExecutionId=0)=>Bridge.ManagementListExecutions(take,afterExecutionId);

@@ -24,4 +24,10 @@
     <None Include="..\BasaltCore.Native\bin\Release\netstandard2.0\BasaltCore.Native.dll" Pack="true" PackagePath="lib\netstandard2.0" />
     <None Include="..\BasaltCore.Native\bin\Release\net8.0\BasaltCore.Native.dll" Pack="true" PackagePath="lib\net8.0" />
   </ItemGroup>
+  <ItemGroup Condition="'$(Configuration)' == 'Debug' And Exists('..\build\Debug\basalt_core_shared.dll')">
+    <None Include="..\build\Debug\basalt_core_shared.dll" Link="basalt_core_shared.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(Configuration)' != 'Debug' And Exists('..\build-release\Release\basalt_core_shared.dll')">
+    <None Include="..\build-release\Release\basalt_core_shared.dll" Link="basalt_core_shared.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
