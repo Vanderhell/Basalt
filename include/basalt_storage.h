@@ -63,6 +63,7 @@ typedef struct basalt_storage_vtable_v1 {
     void (*tx_rollback)(void *);
     /* Optional append-only v1 extension for diagnostic management records. */
     jobdb_result_t (*record_update)(void *, uint32_t, uint64_t, uint64_t, const void *, uint32_t, uint64_t *);
+    jobdb_result_t (*record_delete)(void *, uint32_t, uint64_t, uint64_t);
 } basalt_storage_vtable_v1;
 
 jobdb_result_t basalt_storage_create(const basalt_storage_vtable_v1 *, void *, basalt_storage_t **);
@@ -77,6 +78,7 @@ jobdb_result_t basalt_storage_allocate_execution_id(basalt_storage_t *, uint64_t
 jobdb_result_t basalt_storage_record_create(basalt_storage_t *, uint32_t, uint64_t, const void *, uint32_t);
 jobdb_result_t basalt_storage_record_get(basalt_storage_t *, uint32_t, uint64_t, jobdb_record_t *);
 jobdb_result_t basalt_storage_record_update(basalt_storage_t *, uint32_t, uint64_t, uint64_t, const void *, uint32_t, uint64_t *);
+jobdb_result_t basalt_storage_record_delete(basalt_storage_t *, uint32_t, uint64_t, uint64_t);
 void basalt_storage_record_free(basalt_storage_t *, jobdb_record_t *);
 jobdb_result_t basalt_storage_list_record_ids(basalt_storage_t *, uint32_t, uint64_t *, size_t, size_t *);
 jobdb_result_t basalt_storage_execution_enqueue(basalt_storage_t *, const jobdb_execution_t *, uint32_t, const void *, uint32_t);

@@ -17,6 +17,7 @@ public static class StorageInterop
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] public delegate JobDbResult RecordCreate(IntPtr context,uint type,ulong id,IntPtr payload,uint size);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] public delegate JobDbResult RecordGet(IntPtr context,uint type,ulong id,out Record record);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] public delegate JobDbResult RecordUpdate(IntPtr context,uint type,ulong id,ulong revision,IntPtr payload,uint size,IntPtr outRevision);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] public delegate JobDbResult RecordDelete(IntPtr context,uint type,ulong id,ulong revision);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] public delegate void RecordFree(IntPtr context,ref Record record);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] public delegate JobDbResult ListIds(IntPtr context,uint type,IntPtr ids,UIntPtr capacity,out UIntPtr count);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] public delegate JobDbResult Enqueue(IntPtr context,ref Execution execution,uint recordType,IntPtr payload,uint size);
@@ -48,7 +49,7 @@ public static class StorageInterop
     [StructLayout(LayoutKind.Sequential)] public struct VTable
     {
         public uint AbiVersion,StructSize; public ulong Capabilities; public IntPtr ProviderName;
-        public IntPtr Retain,Release,Health,UtcNow,Allocate,RecordCreate,RecordGet,RecordFree,ListIds,Enqueue,EnqueueExtra,EnqueueReceipt,ReceiptGet,ExecutionGet,Transition,Start,Claim,Renew,Complete,Finalize,Park,Retry,ScheduleCreate,ScheduleGet,ScheduleUpdate,SchedulePause,ScheduleResume,ScheduleRemove,ScheduleFire,StatsGet,TxBegin,TxRecord,TxExecution,TxStats,TxCommit,TxRollback,RecordUpdate;
+        public IntPtr Retain,Release,Health,UtcNow,Allocate,RecordCreate,RecordGet,RecordFree,ListIds,Enqueue,EnqueueExtra,EnqueueReceipt,ReceiptGet,ExecutionGet,Transition,Start,Claim,Renew,Complete,Finalize,Park,Retry,ScheduleCreate,ScheduleGet,ScheduleUpdate,SchedulePause,ScheduleResume,ScheduleRemove,ScheduleFire,StatsGet,TxBegin,TxRecord,TxExecution,TxStats,TxCommit,TxRollback,RecordUpdate,RecordDelete;
     }
     private const string Library="basalt_core_shared";
     [DllImport(Library,CallingConvention=CallingConvention.Cdecl)] public static extern JobDbResult basalt_storage_create_v1(ref VTable vtable,IntPtr context,out IntPtr storage);

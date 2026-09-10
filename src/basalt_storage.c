@@ -73,6 +73,7 @@ static jobdb_result_t embedded_allocate(void *p,uint64_t*out){return jobdb_alloc
 static jobdb_result_t embedded_record_create(void*p,uint32_t t,uint64_t i,const void*b,uint32_t n){return jobdb_record_create((jobdb_t*)p,t,i,b,n);}
 static jobdb_result_t embedded_record_get(void*p,uint32_t t,uint64_t i,jobdb_record_t*r){return jobdb_record_get((jobdb_t*)p,t,i,r);}
 static jobdb_result_t embedded_record_update(void*p,uint32_t t,uint64_t i,uint64_t r,const void*b,uint32_t n,uint64_t*o){return jobdb_record_update((jobdb_t*)p,t,i,r,b,n,o);}
+static jobdb_result_t embedded_record_delete(void*p,uint32_t t,uint64_t i,uint64_t r){return jobdb_record_delete((jobdb_t*)p,t,i,r);}
 static void embedded_record_free(void*p,jobdb_record_t*r){(void)p;jobdb_record_free(r);}
 static jobdb_result_t embedded_list(void*p,uint32_t t,uint64_t*i,size_t n,size_t*c){return jobdb_list_record_ids((jobdb_t*)p,t,i,n,c);}
 static jobdb_result_t embedded_enqueue(void*p,const jobdb_execution_t*e,uint32_t t,const void*b,uint32_t n){return jobdb_execution_enqueue((jobdb_t*)p,e,t,b,n);}
@@ -109,7 +110,7 @@ jobdb_result_t basalt_storage_from_jobdb(jobdb_t *db, basalt_storage_t **out) {
     memset(&v,0,sizeof(v)); v.abi_version=BASALT_STORAGE_ABI_VERSION; v.struct_size=(uint32_t)sizeof(v);
     v.capabilities=BASALT_STORAGE_CAP_ATOMIC_DOMAIN_OPS|BASALT_STORAGE_CAP_BOUNDED_LISTS; v.provider_name="BasaltDB";
     v.retain=embedded_retain;v.release=embedded_release;v.health=embedded_health;v.utc_now=embedded_utc_now;v.allocate_execution_id=embedded_allocate;
-    v.record_create=embedded_record_create;v.record_get=embedded_record_get;v.record_update=embedded_record_update;v.record_free=embedded_record_free;v.list_record_ids=embedded_list;
+    v.record_create=embedded_record_create;v.record_get=embedded_record_get;v.record_update=embedded_record_update;v.record_delete=embedded_record_delete;v.record_free=embedded_record_free;v.list_record_ids=embedded_list;
     v.execution_enqueue=embedded_enqueue;v.execution_enqueue_extra=embedded_enqueue_extra;v.execution_enqueue_receipt=embedded_enqueue_receipt;v.idempotency_get=embedded_receipt;
     v.execution_get=embedded_execution_get;v.execution_transition=embedded_transition;v.execution_start=embedded_start;v.claim_next=embedded_claim;v.renew_lease=embedded_renew;
     v.execution_complete=embedded_complete;v.execution_finalize=embedded_finalize;v.execution_park=embedded_park;v.execution_retry=embedded_retry;
@@ -125,6 +126,7 @@ jobdb_result_t basalt_storage_allocate_execution_id(basalt_storage_t*s,uint64_t*
 jobdb_result_t basalt_storage_record_create(basalt_storage_t*s,uint32_t t,uint64_t i,const void*p,uint32_t n){S_OR_INVALID(s);return s->api.record_create(s->context,t,i,p,n);}
 jobdb_result_t basalt_storage_record_get(basalt_storage_t*s,uint32_t t,uint64_t i,jobdb_record_t*r){S_OR_INVALID(s);return s->api.record_get(s->context,t,i,r);}
 jobdb_result_t basalt_storage_record_update(basalt_storage_t*s,uint32_t t,uint64_t i,uint64_t r,const void*p,uint32_t n,uint64_t*o){S_OR_INVALID(s);return s->api.record_update?s->api.record_update(s->context,t,i,r,p,n,o):JOBDB_ERR_UNSUPPORTED;}
+jobdb_result_t basalt_storage_record_delete(basalt_storage_t*s,uint32_t t,uint64_t i,uint64_t r){S_OR_INVALID(s);return s->api.record_delete?s->api.record_delete(s->context,t,i,r):JOBDB_ERR_UNSUPPORTED;}
 void basalt_storage_record_free(basalt_storage_t*s,jobdb_record_t*r){if(s&&r)s->api.record_free(s->context,r);}
 jobdb_result_t basalt_storage_list_record_ids(basalt_storage_t*s,uint32_t t,uint64_t*i,size_t n,size_t*c){S_OR_INVALID(s);return s->api.list_record_ids(s->context,t,i,n,c);}
 jobdb_result_t basalt_storage_execution_enqueue(basalt_storage_t*s,const jobdb_execution_t*e,uint32_t t,const void*p,uint32_t n){S_OR_INVALID(s);return s->api.execution_enqueue(s->context,e,t,p,n);}

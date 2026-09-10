@@ -86,6 +86,7 @@ jobdb_result_t basalt_workflow_cancel(jobcore_t *core, uint64_t workflow_id);
 jobdb_result_t basalt_management_record_create(jobcore_t *core, uint32_t record_type, uint64_t record_id, const void *payload, uint32_t payload_size);
 jobdb_result_t basalt_management_record_upsert(jobcore_t *core, uint32_t record_type, uint64_t record_id, const void *payload, uint32_t payload_size);
 jobdb_result_t basalt_management_record_update(jobcore_t *core, uint32_t record_type, uint64_t record_id, uint64_t expected_revision, const void *payload, uint32_t payload_size);
+jobdb_result_t basalt_management_record_delete(jobcore_t *core, uint32_t record_type, uint64_t record_id);
 jobdb_result_t basalt_management_record_get(jobcore_t *core, uint32_t record_type, uint64_t record_id, void *payload, uint32_t capacity, uint32_t *out_size);
 jobdb_result_t basalt_management_record_list(jobcore_t *core, uint32_t record_type, uint64_t *ids, size_t capacity, size_t *out_count);
 

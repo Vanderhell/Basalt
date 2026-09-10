@@ -19,6 +19,7 @@ public sealed class BasaltEngine : IDisposable
     private readonly uint _workerCount;
     private readonly DateTimeOffset _workerStartedAt = DateTimeOffset.UtcNow;
     private Timer? _workerHeartbeat;
+    private long _lastWorkerCleanupTicks;
     private int _disposed;
 
     public BasaltEngine(BasaltDatabase database, uint workers = 1, long leaseDuration = 30)
@@ -212,8 +213,21 @@ public sealed class BasaltEngine : IDisposable
                 string worker = BitConverter.ToString(bytes).Replace("-", string.Empty);
                 UpsertManagementText(WorkerHeartbeatRecordType, JobKey.Hash("worker:" + worker), string.Join("|", worker, machine, process, started, now));
             }
+            long ticks = DateTime.UtcNow.Ticks;
+            if (ticks - Interlocked.Read(ref _lastWorkerCleanupTicks) > TimeSpan.FromMinutes(5).Ticks && Interlocked.CompareExchange(ref _lastWorkerCleanupTicks, ticks, Interlocked.Read(ref _lastWorkerCleanupTicks)) != ticks) PruneStaleWorkerHeartbeats(now);
         }
         catch { /* Diagnostic records must not change worker execution behavior. */ }
+    }
+
+    private void PruneStaleWorkerHeartbeats(long now)
+    {
+        foreach (var record in ListManagementText(WorkerHeartbeatRecordType))
+        {
+            var fields = record.Value.Split('|');
+            if (fields.Length != 5 || !long.TryParse(fields[4], out long heartbeat) || now - heartbeat <= TimeSpan.FromDays(1).TotalSeconds) continue;
+            JobDbResult result = NativeMethods.basalt_management_record_delete(_core.DangerousGetHandle(), WorkerHeartbeatRecordType, record.Key);
+            if (result is not (JobDbResult.Ok or JobDbResult.NotFound or JobDbResult.Conflict or JobDbResult.Unsupported)) BasaltDatabase.Check(result);
+        }
     }
 
     /// <summary>Returns a non-destructive provider, queue, and lease diagnostic snapshot.</summary>
