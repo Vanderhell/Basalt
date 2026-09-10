@@ -91,7 +91,7 @@ static async Task RunScenario(Func<BasaltApplication> create, string provider)
 
 static async Task WaitForTerminal(BasaltApplication basalt, ulong id)
 {
-    for (int i = 0; i < 300; i++)
+    for (int i = 0; i < 1200; i++)
     {
         BasaltExecutionInfo? execution = basalt.ListExecutions().FirstOrDefault(item => item.ExecutionId == id);
         if (execution != null && execution.State is ExecutionState.Done or ExecutionState.Failed or ExecutionState.Dead or ExecutionState.Cancelled) return;

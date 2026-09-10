@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  windows-fast-validation:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Configure native build
+        run: cmake -S . -B build -A x64
+
+      - name: Build native Core
+        run: cmake --build build --config Debug
+
+      - name: Run fast native tests
+        run: ctest --test-dir build -C Debug --output-on-failure -R "^(BasaltDB_tests|BasaltCore_tests|BasaltCore_scheduler_policy_tests|BasaltCore_worker_test|BasaltStorage_contract_tests)$"
+
+      - name: Build managed Core
+        run: dotnet build BasaltCore/BasaltCore.csproj -c Debug
+
+      - name: Build SQL Server provider
+        run: dotnet build BasaltCore.SqlServer/BasaltCore.SqlServer.csproj -c Debug
+
+      - name: Build and run modern Embedded consumer
+        run: |
+          dotnet build consumer-smoke/Consumer.csproj -c Debug
+          dotnet run --project consumer-smoke/Consumer.csproj -c Debug --no-build
+
+      - name: Build WPF .NET Framework 4.7.2 consumer
+        run: dotnet build consumer-wpf/ConsumerWpf.csproj -c Debug
+
+      - name: Record SQL integration limitation
+        run: Add-Content $env:GITHUB_STEP_SUMMARY "SQL integration is not run in hosted CI because it requires a provisioned SQL Server and restricted test identity. The provider is compiled above."

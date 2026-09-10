@@ -1,0 +1,47 @@
+name: GitHub Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Configure native release build
+        run: cmake -S . -B build-release -A x64
+
+      - name: Build native Core
+        run: cmake --build build-release --config Release
+
+      - name: Run release-safe native tests
+        run: ctest --test-dir build-release -C Release --output-on-failure -R "^(BasaltDB_tests|BasaltCore_tests|BasaltCore_scheduler_policy_tests|BasaltCore_worker_test|BasaltStorage_contract_tests)$"
+
+      - name: Build managed Core and SQL provider
+        run: |
+          dotnet build BasaltCore/BasaltCore.csproj -c Release
+          dotnet build BasaltCore.SqlServer/BasaltCore.SqlServer.csproj -c Release
+
+      - name: Build and run modern Embedded consumer
+        run: |
+          dotnet build consumer-smoke/Consumer.csproj -c Release
+          dotnet run --project consumer-smoke/Consumer.csproj -c Release --no-build
+
+      - name: Build WPF .NET Framework 4.7.2 consumer
+        run: dotnet build consumer-wpf/ConsumerWpf.csproj -c Release
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true

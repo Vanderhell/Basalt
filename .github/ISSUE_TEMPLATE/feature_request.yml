@@ -1,0 +1,36 @@
+name: Feature request
+description: Propose a change based on a real use case
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: Describe the real application need rather than only a proposed API.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Desired behavior
+    validations:
+      required: true
+  - type: textarea
+    id: insufficient
+    attributes:
+      label: Why the current API is insufficient
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected provider or component
+      options: [Managed API, Embedded, SQL Server, Scheduler, Workflows, Management, Documentation, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility implications
+      description: Note public API, durable-format, deployment, or migration impact if known.

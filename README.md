@@ -1,6 +1,17 @@
 # Basalt
 
-Basalt is a durable background-job, scheduling, and static-workflow engine for .NET. Use the same strongly typed API with a local Embedded store or a shared SQL Server store.
+Basalt is a durable background-job, scheduling, and static-workflow engine for .NET with interchangeable Embedded and SQL Server storage.
+
+## Features
+
+- Strongly typed jobs with durable enqueue, retry, and idempotency
+- Interval, daily, delayed, one-off, and cron scheduling
+- Static workflow DAGs and management APIs
+- Crash recovery, leases, fencing, and multiprocess coordination
+- Local Embedded storage or a dedicated schema in an existing SQL Server database
+- .NET 8 and .NET Framework 4.7.2/WPF consumers
+
+## Embedded in 30 seconds
 
 ```csharp
 using var basalt = Basalt.Embedded(@"C:\data\jobs");
@@ -14,7 +25,9 @@ await basalt.EnqueueAsync(new SendInvoice(123), key: "invoice:123", retry: 5);
 await basalt.StopAsync();
 ```
 
-SQL Server changes only storage creation; job code stays identical:
+## SQL Server
+
+SQL Server changes only storage creation; handler and job code stays identical:
 
 ```csharp
 using var basalt = Basalt.SqlServer(connectionString, sql =>
@@ -24,16 +37,19 @@ using var basalt = Basalt.SqlServer(connectionString, sql =>
 });
 ```
 
-```csharp
-await basalt.EveryAsync("sync", TimeSpan.FromMinutes(5), new SyncJob());
-await basalt.Workflow("invoice")
-    .Add("create", new CreateInvoice())
-    .Then("send", new SendInvoice(123))
-    .SubmitAsync();
-```
-
 SQL storage does not execute work by itself. Every process intended to execute jobs must register its handlers and call `StartAsync`.
 
-Basalt provides at-least-once execution. Durable enqueue confirms submission, not handler completion; external side effects must be idempotent or fenced.
+## Documentation
 
-See [docs/api.md](docs/api.md) for the complete public API guide.
+- [Getting started](docs/getting-started.md)
+- [Public API](docs/api.md)
+- [Cookbook](docs/cookbook.md)
+- [Durability contract](docs/durability.md)
+- [SQL Server](docs/sql-server.md)
+- [Architecture](docs/architecture.md) and [storage choices](docs/storage.md)
+
+Basalt provides **at-least-once execution**. Durable enqueue confirms submission, not handler completion; external side effects must be idempotent or fenced.
+
+## License
+
+Basalt is licensed under the [MIT License](LICENSE), copyright © 2026 Vanderhell.
