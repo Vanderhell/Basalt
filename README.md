@@ -1,33 +1,102 @@
 # Basalt
 
-Basalt is a durable background-job, scheduling, and static-workflow engine for .NET with interchangeable Embedded and SQL Server storage.
+**Durable background jobs for .NET -- embedded when local, SQL Server when shared.**
 
-## Features
+[![CI](https://github.com/Vanderhell/Basalt/actions/workflows/ci.yml/badge.svg)](https://github.com/Vanderhell/Basalt/actions/workflows/ci.yml)
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
-- Strongly typed jobs with durable enqueue, retry, and idempotency
-- Interval, daily, delayed, one-off, and cron scheduling
-- Static workflow DAGs and management APIs
-- Crash recovery, leases, fencing, and multiprocess coordination
-- Local Embedded storage or a dedicated schema in an existing SQL Server database
-- .NET 8 and .NET Framework 4.7.2/WPF consumers
+Basalt is a lightweight durable job, scheduling, and static-workflow engine for .NET applications. Run it inside an application with embedded storage, or let multiple processes share the same queue through SQL Server -- with the same managed API.
 
-## Embedded in 30 seconds
+No separate job server is required.
+
+## Quick start
 
 ```csharp
+using BasaltCore;
+
 using var basalt = Basalt.Embedded(@"C:\data\jobs");
 
-basalt.On<SendInvoice>("billing.send",
-    async (job, context, cancellationToken) =>
-        await SendIdempotently(job, context.ExecutionId, cancellationToken));
+basalt.On<SendInvoice>("billing.send", async (job, context, ct) =>
+    await SendInvoiceAsync(job, ct));
 
 await basalt.StartAsync();
-await basalt.EnqueueAsync(new SendInvoice(123), key: "invoice:123", retry: 5);
+
+await basalt.EnqueueAsync(
+    new SendInvoice(123),
+    key: "invoice:123",
+    retry: 5);
+
 await basalt.StopAsync();
 ```
 
-## SQL Server
+Need a shared queue instead?
 
-SQL Server changes only storage creation; handler and job code stays identical:
+```csharp
+using BasaltCore;
+using BasaltCore.SqlServer;
+
+using var basalt = Basalt.SqlServer(connectionString);
+```
+
+The handler and job code stays the same.
+
+## What Basalt gives you
+
+- Durable, strongly typed background jobs
+- Retry and idempotency
+- Delayed, interval, daily, and cron scheduling
+- Static DAG workflows
+- Crash recovery, leases, and fencing
+- Multi-process coordination
+- Embedded local storage or shared SQL Server storage
+- .NET 8 and .NET Framework 4.7.2 / WPF support
+
+## Scheduling
+
+```csharp
+await basalt.EveryAsync(
+    "sync",
+    TimeSpan.FromMinutes(5),
+    new SyncJob());
+```
+
+For cron, timezone, overlap, and misfire policies, use the scheduler builder:
+
+```csharp
+await basalt.ScheduleAsync(
+    "nightly",
+    new BackupJob(),
+    schedule => schedule
+        .Cron("0 2 * * *")
+        .InTimeZone("Central Europe Standard Time")
+        .OnOverlap(OverlapPolicy.Skip));
+```
+
+## Workflows
+
+```csharp
+await basalt.Workflow("invoice")
+    .Add("create", new CreateInvoice())
+    .Then("send", new SendInvoice())
+    .Then("notify", new NotifyCustomer())
+    .SubmitAsync();
+```
+
+Workflows are static durable DAGs. Explicit dependencies and dependency-failure policies are also supported.
+
+## Embedded or SQL Server?
+
+### Embedded
+
+Use Embedded when Basalt runs in one application or on one machine. It needs only an application-owned writable directory.
+
+```csharp
+using var basalt = Basalt.Embedded(@"C:\data\jobs");
+```
+
+### SQL Server
+
+Use SQL Server when multiple application instances or machines must share durable work. Basalt owns objects only in its configurable schema inside the existing database.
 
 ```csharp
 using var basalt = Basalt.SqlServer(connectionString, sql =>
@@ -37,19 +106,26 @@ using var basalt = Basalt.SqlServer(connectionString, sql =>
 });
 ```
 
-SQL storage does not execute work by itself. Every process intended to execute jobs must register its handlers and call `StartAsync`.
+SQL storage is not a worker service: every process that executes jobs registers handlers and calls `StartAsync`.
+
+## Durability model
+
+Basalt provides **at-least-once execution**. A successful enqueue means the job was durably accepted, not that its handler has completed. Handlers that produce external side effects must be idempotent or use appropriate fencing and idempotency controls.
 
 ## Documentation
 
 - [Getting started](docs/getting-started.md)
-- [Public API](docs/api.md)
+- [API reference](docs/api.md)
 - [Cookbook](docs/cookbook.md)
-- [Durability contract](docs/durability.md)
+- [Durability](docs/durability.md)
 - [SQL Server](docs/sql-server.md)
-- [Architecture](docs/architecture.md) and [storage choices](docs/storage.md)
+- [Storage](docs/storage.md)
+- [Architecture](docs/architecture.md)
 
-Basalt provides **at-least-once execution**. Durable enqueue confirms submission, not handler completion; external side effects must be idempotent or fenced.
+## Contributing
+
+Contributions and bug reports are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Security reports follow [SECURITY.md](SECURITY.md).
 
 ## License
 
-Basalt is licensed under the [MIT License](LICENSE), copyright © 2026 Vanderhell.
+MIT License - Copyright 2026 Vanderhell. See [LICENSE](LICENSE).
