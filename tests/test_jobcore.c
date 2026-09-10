@@ -7,11 +7,14 @@
 #include <windows.h>
  #include <io.h>
 static void pause_ms(unsigned n) { Sleep(n); }
-static void clean_db(void) { struct _finddata_t data; intptr_t handle = _findfirst("jobcore-test/*", &data); if (handle != -1) { do { char path[256]; if (strcmp(data.name, ".") && strcmp(data.name, "..")) { (void)snprintf(path, sizeof path, "jobcore-test/%s", data.name); (void)remove(path); } } while (_findnext(handle, &data) == 0); _findclose(handle); } }
+static void clean_db(const char *directory) { struct _finddata_t data; char pattern[320]; intptr_t handle; (void)snprintf(pattern, sizeof pattern, "%s/*", directory); handle = _findfirst(pattern, &data); if (handle != -1) { do { char path[320]; if (strcmp(data.name, ".") && strcmp(data.name, "..")) { (void)snprintf(path, sizeof path, "%s/%s", directory, data.name); (void)remove(path); } } while (_findnext(handle, &data) == 0); _findclose(handle); } (void)RemoveDirectoryA(directory); }
+static void test_db_path(char *path, size_t size) { (void)snprintf(path, size, "jobcore-test-%lu", (unsigned long)GetCurrentProcessId()); }
 #else
 #include <unistd.h>
+#include <dirent.h>
 static void pause_ms(unsigned n) { (void)usleep(n * 1000u); }
-static void clean_db(void) { (void)remove("jobcore-test/manifest.0"); (void)remove("jobcore-test/manifest.1"); (void)remove("jobcore-test/wal.0"); }
+static void clean_db(const char *directory) { DIR *dir = opendir(directory); if (dir) { struct dirent *entry; while ((entry = readdir(dir)) != NULL) { char path[320]; if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue; (void)snprintf(path, sizeof path, "%s/%s", directory, entry->d_name); (void)remove(path); } closedir(dir); } (void)rmdir(directory); }
+static void test_db_path(char *path, size_t size) { (void)snprintf(path, size, "jobcore-test-%ld", (long)getpid()); }
 #endif
 
 static int handled;
@@ -67,17 +70,14 @@ int main(void) {
     jobcore_workflow_node_t workflow_nodes[2], cycle_nodes[2];
     jobdb_stats_t stats_before, stats_after;
     uint64_t workflow_root = 0, workflow_child = 0, success_child = 0, recovery_child_block = 0, recovery_child_continue = 0, recovery_child_fail = 0;
+    char test_path[128];
+    test_db_path(test_path, sizeof test_path);
     assert(jobcore_cron_next_fire("*/15 * * * *", "UTC", now, &next_fire) == JOBDB_OK);
     assert(next_fire > now && next_fire % 900 == 0);
     assert(jobcore_cron_next_fire("0 2 * * *", "Europe/Bratislava", now, &next_fire) == JOBDB_OK);
     assert(jobcore_cron_next_fire("invalid", "UTC", now, &next_fire) == JOBDB_ERR_INVALID_ARGUMENT);
-    clean_db();
-    remove("jobcore-test/wal.0"); remove("jobcore-test/coordination.lock");
-    remove("jobcore-test/record.3.1"); remove("jobcore-test/record.3.2");
-    remove("jobcore-test/record.100.1"); remove("jobcore-test/record.100.2");
-    remove("jobcore-test/record.2.50"); remove("jobcore-test/record.2.51"); remove("jobcore-test/record.2.52");
-    remove("jobcore-test/record.101.50"); remove("jobcore-test/record.101.51"); remove("jobcore-test/record.101.52");
-    assert(jobdb_create("jobcore-test", &db) == JOBDB_OK);
+    clean_db(test_path);
+    assert(jobdb_create(test_path, &db) == JOBDB_OK);
     assert(jobcore_create(db, 2, 10, &core) == JOBDB_OK);
     assert(jobcore_register_handler(core, 42, handler, NULL) == JOBDB_OK);
     assert(jobcore_enqueue(core, 42, "job", 3, 7, now, 1, &id) == JOBDB_OK);
@@ -123,11 +123,12 @@ int main(void) {
     assert(jobcore_stop(core) == JOBDB_OK);
     jobcore_destroy(core); core = NULL;
     jobdb_close(db); db = NULL;
-    assert(jobdb_open("jobcore-test", &db) == JOBDB_OK);
+    assert(jobdb_open(test_path, &db) == JOBDB_OK);
     assert(jobdb_execution_get(db, id, &persisted) == JOBDB_OK);
-    { jobcore_t *test_core = NULL; jobcore_retry_spec_t retry = { JOBCORE_RETRY_FIXED, 3, 1, 10, 1.0, 0 }; uint64_t retry_id = 0; jobdb_record_t policy = {0}; assert(jobcore_create(db, 1, 10, &test_core) == JOBDB_OK); jobdb_test_fail_next(db, JOBDB_FAILURE_AFTER_COMMIT); assert(jobcore_enqueue_with_retry(test_core, 42, "job", 3, 7, now, &retry, &retry_id) == JOBDB_ERR_IO); jobcore_destroy(test_core); jobdb_close(db); db = NULL; assert(jobdb_open("jobcore-test", &db) == JOBDB_OK); assert(jobdb_execution_get(db, retry_id, &persisted) == JOBDB_OK && persisted.state == JOBDB_EXEC_READY); assert(jobdb_record_get(db, 103, retry_id, &policy) == JOBDB_OK && policy.payload_size > 0); jobdb_record_free(&policy); }
-    assert(jobdb_verify("jobcore-test") == JOBDB_OK);
+    { jobcore_t *test_core = NULL; jobcore_retry_spec_t retry = { JOBCORE_RETRY_FIXED, 3, 1, 10, 1.0, 0 }; uint64_t retry_id = 0; jobdb_record_t policy = {0}; assert(jobcore_create(db, 1, 10, &test_core) == JOBDB_OK); jobdb_test_fail_next(db, JOBDB_FAILURE_AFTER_COMMIT); assert(jobcore_enqueue_with_retry(test_core, 42, "job", 3, 7, now, &retry, &retry_id) == JOBDB_ERR_IO); jobcore_destroy(test_core); jobdb_close(db); db = NULL; assert(jobdb_open(test_path, &db) == JOBDB_OK); assert(jobdb_execution_get(db, retry_id, &persisted) == JOBDB_OK && persisted.state == JOBDB_EXEC_READY); assert(jobdb_record_get(db, 103, retry_id, &policy) == JOBDB_OK && policy.payload_size > 0); jobdb_record_free(&policy); }
+    assert(jobdb_verify(test_path) == JOBDB_OK);
     jobdb_close(db);
+    clean_db(test_path);
     puts("jobcore tests passed");
     return 0;
 }
