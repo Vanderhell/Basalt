@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using BasaltCore.Native;
@@ -7,6 +8,7 @@ namespace BasaltCore;
 
 public sealed class BasaltEngine : IDisposable
 {
+    private const uint WorkerHeartbeatRecordType = 1003;
     private readonly BasaltDatabase? _database;
     private readonly BasaltStorage? _storage;
     private readonly BasaltCoreHandle _core;
@@ -14,11 +16,15 @@ public sealed class BasaltEngine : IDisposable
     private readonly object _lifecycle = new();
     private readonly bool _databaseRetained;
     private readonly bool _storageRetained;
+    private readonly uint _workerCount;
+    private readonly DateTimeOffset _workerStartedAt = DateTimeOffset.UtcNow;
+    private Timer? _workerHeartbeat;
     private int _disposed;
 
     public BasaltEngine(BasaltDatabase database, uint workers = 1, long leaseDuration = 30)
     {
         _database = database ?? throw new ArgumentNullException(nameof(database));
+        _workerCount=workers;
         database.Retain(out _databaseRetained);
         try { BasaltDatabase.Check(NativeMethods.basalt_core_create(database.Handle, workers, leaseDuration, out var core)); _core = new BasaltCoreHandle(core); }
         catch { if (_databaseRetained) database.Release(); throw; }
@@ -28,14 +34,14 @@ public sealed class BasaltEngine : IDisposable
     {
         _database = database ?? throw new ArgumentNullException(nameof(database));
         if (options == null) throw new ArgumentNullException(nameof(options));
-        database.Retain(out _databaseRetained);
+        _workerCount=options.WorkerCount; database.Retain(out _databaseRetained);
         try { BasaltDatabase.Check(NativeMethods.basalt_core_create_ex(database.Handle, options.WorkerCount, options.LeaseDurationSeconds, options.StopGraceMilliseconds, out var core)); _core = new BasaltCoreHandle(core); }
         catch { if (_databaseRetained) database.Release(); throw; }
     }
 
     public BasaltEngine(BasaltStorage storage, BasaltOptions? options = null)
     {
-        _storage=storage??throw new ArgumentNullException(nameof(storage));options??=new BasaltOptions();
+        _storage=storage??throw new ArgumentNullException(nameof(storage));options??=new BasaltOptions();_workerCount=options.WorkerCount;
         storage.RetainManaged();_storageRetained=true;
         try{BasaltDatabase.Check(NativeMethods.basalt_core_create_storage_v1(storage.DangerousHandle,options.WorkerCount,options.LeaseDurationSeconds,options.StopGraceMilliseconds,out var core));_core=new BasaltCoreHandle(core);}
         catch{storage.ReleaseManaged();throw;}
@@ -92,8 +98,8 @@ public sealed class BasaltEngine : IDisposable
         return EnqueueAsync(JobKey.Hash(stableKey), serializer.Serialize(value), serializer.Version, maxAttempts, cancellationToken);
     }
 
-    public void Start() { lock (_lifecycle) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_core_start(_core.DangerousGetHandle())); } }
-    public void Stop() { lock (_lifecycle) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_core_stop(_core.DangerousGetHandle())); } }
+    public void Start() { lock (_lifecycle) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_core_start(_core.DangerousGetHandle())); StartWorkerMonitoring(); } }
+    public void Stop() { lock (_lifecycle) { ThrowIfDisposed(); _workerHeartbeat?.Dispose(); _workerHeartbeat=null; BasaltDatabase.Check(NativeMethods.basalt_core_stop(_core.DangerousGetHandle())); } }
     public Task StartAsync(CancellationToken cancellationToken = default) { cancellationToken.ThrowIfCancellationRequested(); Start(); return Task.CompletedTask; }
     public Task StopAsync(CancellationToken cancellationToken = default) { cancellationToken.ThrowIfCancellationRequested(); Stop(); return Task.CompletedTask; }
     public Task<ulong> EnqueueAsync(ulong jobType, ReadOnlyMemory<byte> payload, uint payloadVersion = 1, uint maxAttempts = 1, CancellationToken cancellationToken = default)
@@ -165,15 +171,49 @@ public sealed class BasaltEngine : IDisposable
     public IReadOnlyList<BasaltWorkerInfo> ListWorkers()
     {
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        return ListAllExecutions().Where(x => (x.State == ExecutionState.Leased || x.State == ExecutionState.Running) && x.WorkerInstanceId != null)
+        var active = ListAllExecutions().Where(x => (x.State == ExecutionState.Leased || x.State == ExecutionState.Running) && x.WorkerInstanceId != null)
             .GroupBy(x => x.WorkerInstanceId!)
-            .Select(group => new BasaltWorkerInfo
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+        var result = new List<BasaltWorkerInfo>();
+        foreach (var entry in ListManagementText(WorkerHeartbeatRecordType))
+        {
+            var fields = entry.Value.Split('|');
+            if (fields.Length != 5 || !long.TryParse(fields[2], out long pid) || !long.TryParse(fields[3], out long started) || !long.TryParse(fields[4], out long heartbeat)) continue;
+            string workerId = fields[0]; string? machine;
+            try { machine = Encoding.UTF8.GetString(Convert.FromBase64String(fields[1])); } catch { machine = null; }
+            active.TryGetValue(workerId, out var owned); active.Remove(workerId);
+            var last = DateTimeOffset.FromUnixTimeSeconds(heartbeat);
+            result.Add(new BasaltWorkerInfo
             {
-                WorkerId = group.Key,
-                ActiveExecutionCount = group.Count(),
-                LeaseExpiresAt = group.Max(x => x.LeaseExpiresAt),
-                Status = group.Any(x => x.LeaseExpiresAt.HasValue && x.LeaseExpiresAt.Value <= now) ? BasaltWorkerStatus.Stale : BasaltWorkerStatus.Alive
-            }).OrderBy(x => x.WorkerId, StringComparer.Ordinal).ToArray();
+                WorkerId = workerId, InstanceId = workerId, MachineName = machine, ProcessId = pid is >= int.MinValue and <= int.MaxValue ? (int)pid : null,
+                StartedAt = DateTimeOffset.FromUnixTimeSeconds(started), LastHeartbeatAt = last, ActiveExecutionCount = owned?.Length ?? 0,
+                LeaseExpiresAt = owned?.Select(x => x.LeaseExpiresAt).Max(), Status = now - last > TimeSpan.FromSeconds(15) ? BasaltWorkerStatus.Stale : BasaltWorkerStatus.Alive
+            });
+        }
+        result.AddRange(active.Select(group => new BasaltWorkerInfo { WorkerId = group.Key, InstanceId = group.Key, ActiveExecutionCount = group.Value.Length, LeaseExpiresAt = group.Value.Select(x => x.LeaseExpiresAt).Max(), Status = group.Value.Any(x => x.LeaseExpiresAt <= now) ? BasaltWorkerStatus.Stale : BasaltWorkerStatus.Alive }));
+        return result.OrderBy(x => x.WorkerId, StringComparer.Ordinal).ToArray();
+    }
+
+    private void StartWorkerMonitoring()
+    {
+        WriteWorkerHeartbeats();
+        _workerHeartbeat ??= new Timer(_ => WriteWorkerHeartbeats(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    private void WriteWorkerHeartbeats()
+    {
+        try
+        {
+            string machine = Convert.ToBase64String(Encoding.UTF8.GetBytes(Environment.MachineName));
+            long started = _workerStartedAt.ToUnixTimeSeconds(), now = DateTimeOffset.UtcNow.ToUnixTimeSeconds(); int process = Process.GetCurrentProcess().Id;
+            for (uint index = 1; index <= _workerCount; index++)
+            {
+                var bytes = new byte[16]; if (NativeMethods.basalt_core_worker_id(_core.DangerousGetHandle(), index, bytes) != JobDbResult.Ok) continue;
+                string worker = BitConverter.ToString(bytes).Replace("-", string.Empty);
+                UpsertManagementText(WorkerHeartbeatRecordType, JobKey.Hash("worker:" + worker), string.Join("|", worker, machine, process, started, now));
+            }
+        }
+        catch { /* Diagnostic records must not change worker execution behavior. */ }
     }
 
     /// <summary>Returns a non-destructive provider, queue, and lease diagnostic snapshot.</summary>
@@ -251,6 +291,13 @@ public sealed class BasaltEngine : IDisposable
         BasaltDatabase.Check(result);
     }
 
+    private void UpsertManagementText(uint recordType, ulong recordId, string value)
+    {
+        byte[] bytes = Encoding.UTF8.GetBytes(value);
+        JobDbResult result = NativeMethods.basalt_management_record_upsert(_core.DangerousGetHandle(), recordType, recordId, bytes, (uint)bytes.Length);
+        if (result != JobDbResult.Conflict) BasaltDatabase.Check(result);
+    }
+
     internal IReadOnlyDictionary<ulong, string> ListManagementText(uint recordType)
     {
         ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_management_record_list(_core.DangerousGetHandle(), recordType, null, UIntPtr.Zero, out var needed));
@@ -306,7 +353,7 @@ public sealed class BasaltEngine : IDisposable
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        lock (_lifecycle) { _core.Dispose(); _handlers.Clear(); if (_databaseRetained) _database!.Release(); if(_storageRetained)_storage!.ReleaseManaged(); } GC.SuppressFinalize(this);
+        lock (_lifecycle) { _workerHeartbeat?.Dispose(); _workerHeartbeat=null; _core.Dispose(); _handlers.Clear(); if (_databaseRetained) _database!.Release(); if(_storageRetained)_storage!.ReleaseManaged(); } GC.SuppressFinalize(this);
     }
     public BasaltWorkflowStatus GetWorkflow(ulong workflowId) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_workflow_get(_core.DangerousGetHandle(),workflowId,out var s)); return new BasaltWorkflowStatus{WorkflowId=s.WorkflowId,NodeCount=s.NodeCount,ReadyCount=s.ReadyCount,BlockedCount=s.BlockedCount,RunningCount=s.RunningCount,TerminalCount=s.TerminalCount,FailedCount=s.FailedCount,CancelledCount=s.CancelledCount,CancelRequested=s.CancelRequested!=0}; }
     public IReadOnlyList<BasaltWorkflowStatus> ListWorkflows(int take = 100, ulong afterWorkflowId = 0)

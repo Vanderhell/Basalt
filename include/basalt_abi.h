@@ -73,6 +73,7 @@ jobdb_result_t basalt_core_create_storage_v1(basalt_storage_t *storage, uint32_t
 void basalt_core_destroy(jobcore_t *core);
 jobdb_result_t basalt_core_start(jobcore_t *core);
 jobdb_result_t basalt_core_stop(jobcore_t *core);
+jobdb_result_t basalt_core_worker_id(jobcore_t *core, uint32_t worker_index, uint8_t out_worker_id[16]);
 jobdb_result_t basalt_core_register_handler(jobcore_t *core, uint64_t job_type, jobcore_handler_fn handler, void *user_data);
 jobdb_result_t basalt_core_enqueue(jobcore_t *core, uint64_t job_type, const void *payload, uint32_t payload_size, uint32_t payload_version, int64_t now, uint32_t max_attempts, uint64_t *out_execution_id);
 jobdb_result_t basalt_core_enqueue_retry(jobcore_t *core, uint64_t job_type, const void *payload, uint32_t payload_size, uint32_t payload_version, int64_t now, const basalt_retry_spec_v1_t *retry, uint64_t *out_execution_id);
@@ -83,6 +84,8 @@ jobdb_result_t basalt_core_workflow_submit(jobcore_t *core, uint64_t workflow_id
 jobdb_result_t basalt_workflow_get(jobcore_t *core, uint64_t workflow_id, basalt_workflow_status_v1_t *out_status);
 jobdb_result_t basalt_workflow_cancel(jobcore_t *core, uint64_t workflow_id);
 jobdb_result_t basalt_management_record_create(jobcore_t *core, uint32_t record_type, uint64_t record_id, const void *payload, uint32_t payload_size);
+jobdb_result_t basalt_management_record_upsert(jobcore_t *core, uint32_t record_type, uint64_t record_id, const void *payload, uint32_t payload_size);
+jobdb_result_t basalt_management_record_update(jobcore_t *core, uint32_t record_type, uint64_t record_id, uint64_t expected_revision, const void *payload, uint32_t payload_size);
 jobdb_result_t basalt_management_record_get(jobcore_t *core, uint32_t record_type, uint64_t record_id, void *payload, uint32_t capacity, uint32_t *out_size);
 jobdb_result_t basalt_management_record_list(jobcore_t *core, uint32_t record_type, uint64_t *ids, size_t capacity, size_t *out_count);
 

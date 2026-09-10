@@ -64,6 +64,7 @@ basalt_storage_t *jobcore_storage(jobcore_t *);
 void jobcore_destroy(jobcore_t *);
 jobdb_result_t jobcore_start(jobcore_t *);
 jobdb_result_t jobcore_stop(jobcore_t *);
+jobdb_result_t jobcore_worker_id(jobcore_t *, uint32_t, uint8_t out_worker_id[16]);
 jobdb_result_t jobcore_stop_with_grace(jobcore_t *, uint32_t);
 jobdb_result_t jobcore_register_handler(jobcore_t *, uint64_t, jobcore_handler_fn, void *);
 jobdb_result_t jobcore_register_handler_name(jobcore_t *, const char *, jobcore_handler_fn, void *, uint64_t *);

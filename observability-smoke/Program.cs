@@ -36,6 +36,9 @@ try
 
         var health = basalt.GetHealth();
         Require(health.Status == BasaltHealthStatus.Healthy && health.Provider == "Embedded", "Embedded health snapshot is not healthy.");
+        await basalt.StartAsync();
+        Require(basalt.ListWorkers().Any(x => x.LastHeartbeatAt.HasValue && x.MachineName != null && x.ProcessId.HasValue), "Worker heartbeat registration was not observable.");
+        await basalt.StopAsync();
     }
 
     using (var observer = Basalt.Embedded(path))

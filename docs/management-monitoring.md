@@ -34,7 +34,7 @@ var workers = basalt.ListWorkers();
 
 Schedule and workflow actions retain Basalt's optimistic revision checks. `Cancel` and `Requeue` are validated by BasaltCore, so a UI race is rejected rather than silently applied to a changed execution.
 
-`ListWorkers()` is observational: it reports owners of active leases, their active-execution count, and lease expiry. It is not a heartbeat registry and is not used for recovery or correctness. Execution safety continues to depend on leases and fencing; an absent worker entry never changes an execution state.
+`ListWorkers()` is observational. Starting an engine registers each native worker with a machine name, process ID, start time, and a revision-checked heartbeat refreshed every five seconds. A heartbeat older than fifteen seconds is `Stale`. Active execution count and lease expiry are joined from current leases. Heartbeats are never used for recovery or correctness: execution safety continues to depend on leases and fencing; a missing or stale entry never changes an execution state.
 
 ## Dashboard
 

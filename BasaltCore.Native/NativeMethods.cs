@@ -99,6 +99,7 @@ public static class NativeMethods
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     public static extern JobDbResult basalt_core_stop(nint core);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] public static extern JobDbResult basalt_core_worker_id(nint core, uint workerIndex, [Out] byte[] workerId);
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     public static extern JobDbResult basalt_core_register_handler(nint core, ulong type, JobHandler handler, IntPtr data);
@@ -116,6 +117,8 @@ public static class NativeMethods
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] public static extern JobDbResult basalt_workflow_get(nint core, ulong workflowId, out WorkflowStatus status);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] public static extern JobDbResult basalt_workflow_cancel(nint core, ulong workflowId);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] public static extern JobDbResult basalt_management_record_create(nint core, uint recordType, ulong recordId, byte[] payload, uint payloadSize);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] public static extern JobDbResult basalt_management_record_upsert(nint core, uint recordType, ulong recordId, byte[] payload, uint payloadSize);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] public static extern JobDbResult basalt_management_record_update(nint core, uint recordType, ulong recordId, ulong expectedRevision, byte[] payload, uint payloadSize);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] public static extern JobDbResult basalt_management_record_get(nint core, uint recordType, ulong recordId, byte[]? payload, uint capacity, out uint payloadSize);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] public static extern JobDbResult basalt_management_record_list(nint core, uint recordType, ulong[]? ids, UIntPtr capacity, out UIntPtr count);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]

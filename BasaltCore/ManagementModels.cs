@@ -98,7 +98,12 @@ public enum BasaltWorkerStatus { Alive, Stale }
 public sealed class BasaltWorkerInfo
 {
     public string WorkerId { get; internal set; } = string.Empty;
+    public string InstanceId { get; internal set; } = string.Empty;
+    public string? MachineName { get; internal set; }
+    public int? ProcessId { get; internal set; }
     public BasaltWorkerStatus Status { get; internal set; }
+    public DateTimeOffset? StartedAt { get; internal set; }
+    public DateTimeOffset? LastHeartbeatAt { get; internal set; }
     public DateTimeOffset? LeaseExpiresAt { get; internal set; }
     public int ActiveExecutionCount { get; internal set; }
 }
