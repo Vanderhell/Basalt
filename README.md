@@ -88,6 +88,17 @@ await basalt.Workflow("invoice")
 
 Workflows are static durable DAGs. Explicit dependencies and dependency-failure policies are also supported.
 
+## Dashboard and management
+
+`BasaltDashboard` is a separate WPF management console for health, queue state, executions, failures, schedules, workflows, workers, and cumulative statistics. It uses the same storage-neutral public Basalt API, never Embedded files or SQL Server tables directly.
+
+```text
+dotnet run --project BasaltDashboard -- C:\data\jobs
+dotnet run --project BasaltDashboard -- --sql "<connection string>"
+```
+
+See [Management and monitoring](docs/management-monitoring.md) for the health, queue, filtering, and lifecycle APIs.
+
 ## Embedded or SQL Server?
 
 ### Embedded
@@ -125,6 +136,7 @@ Basalt provides **at-least-once execution**. A successful enqueue means the job 
 - [SQL Server](docs/sql-server.md)
 - [Storage](docs/storage.md)
 - [Architecture](docs/architecture.md)
+- [Management and monitoring](docs/management-monitoring.md)
 
 ## Contributing
 

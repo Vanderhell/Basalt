@@ -12,13 +12,13 @@ public sealed class BasaltExecutionInfo
 {
     public BasaltExecutionInfo(ulong executionId, ulong jobDefinitionId, ulong scheduleId, ulong workflowId, uint state,
         long createdAt, long eligibleAt, long startedAt, long finishedAt, int priority, uint attempt, uint maxAttempts,
-        ulong revision, long leaseExpiresAt, ulong fencingToken)
+        ulong revision, long leaseExpiresAt, ulong fencingToken, byte[]? workerInstanceId = null)
     {
         ExecutionId=executionId; JobDefinitionId=jobDefinitionId; ScheduleId=scheduleId; WorkflowId=workflowId;
         State=(ExecutionState)state; CreatedAt=UnixTime.Required(createdAt); EligibleAt=UnixTime.Required(eligibleAt);
         StartedAt=UnixTime.Optional(startedAt); FinishedAt=UnixTime.Optional(finishedAt); Priority=priority;
         Attempt=attempt; MaxAttempts=maxAttempts; Revision=revision; LeaseExpiresAt=UnixTime.Optional(leaseExpiresAt);
-        FencingToken=fencingToken;
+        FencingToken=fencingToken; WorkerInstanceId=workerInstanceId == null || workerInstanceId.All(x => x == 0) ? null : BitConverter.ToString(workerInstanceId).Replace("-", string.Empty);
     }
     public ulong ExecutionId { get; }
     public ulong JobDefinitionId { get; }
@@ -35,6 +35,83 @@ public sealed class BasaltExecutionInfo
     public ulong Revision { get; }
     public DateTimeOffset? LeaseExpiresAt { get; }
     public ulong FencingToken { get; }
+    public string? WorkerInstanceId { get; }
+    /// <summary>Registered stable job key when its durable management mapping is available.</summary>
+    public string? JobKey { get; internal set; }
+    public TimeSpan? QueueWait => StartedAt.HasValue ? StartedAt.Value - CreatedAt : null;
+    public TimeSpan? ExecutionDuration => StartedAt.HasValue && FinishedAt.HasValue ? FinishedAt.Value - StartedAt.Value : null;
+}
+
+/// <summary>Filters a bounded page of durable executions. All supplied filters are combined.</summary>
+public sealed class ExecutionQuery
+{
+    public IReadOnlyCollection<ExecutionState>? States { get; set; }
+    public ulong? JobDefinitionId { get; set; }
+    public ulong? ScheduleId { get; set; }
+    public ulong? WorkflowId { get; set; }
+    public DateTimeOffset? CreatedFrom { get; set; }
+    public DateTimeOffset? CreatedTo { get; set; }
+    public int Take { get; set; } = 100;
+    public ulong AfterExecutionId { get; set; }
+
+    internal bool Matches(BasaltExecutionInfo value)
+    {
+        if (States != null && States.Count != 0 && !States.Contains(value.State)) return false;
+        if (JobDefinitionId.HasValue && value.JobDefinitionId != JobDefinitionId.Value) return false;
+        if (ScheduleId.HasValue && value.ScheduleId != ScheduleId.Value) return false;
+        if (WorkflowId.HasValue && value.WorkflowId != WorkflowId.Value) return false;
+        if (CreatedFrom.HasValue && value.CreatedAt < CreatedFrom.Value) return false;
+        return !CreatedTo.HasValue || value.CreatedAt <= CreatedTo.Value;
+    }
+}
+
+/// <summary>Current, non-cumulative execution counts grouped by durable state.</summary>
+public sealed class BasaltQueueStats
+{
+    public ulong Created { get; internal set; } public ulong Scheduled { get; internal set; } public ulong Ready { get; internal set; }
+    public ulong Leased { get; internal set; } public ulong Running { get; internal set; } public ulong Retry { get; internal set; }
+    public ulong Blocked { get; internal set; } public ulong Done { get; internal set; } public ulong Failed { get; internal set; }
+    public ulong Dead { get; internal set; } public ulong Cancelled { get; internal set; } public ulong Paused { get; internal set; }
+    public ulong Active => Ready + Leased + Running + Retry + Blocked;
+
+    internal void Add(ExecutionState state)
+    {
+        switch (state)
+        {
+            case ExecutionState.Created: Created++; break; case ExecutionState.Scheduled: Scheduled++; break;
+            case ExecutionState.Ready: Ready++; break; case ExecutionState.Leased: Leased++; break;
+            case ExecutionState.Running: Running++; break; case ExecutionState.Retry: Retry++; break;
+            case ExecutionState.Blocked: Blocked++; break; case ExecutionState.Done: Done++; break;
+            case ExecutionState.Failed: Failed++; break; case ExecutionState.Dead: Dead++; break;
+            case ExecutionState.Cancelled: Cancelled++; break; case ExecutionState.Paused: Paused++; break;
+        }
+    }
+}
+
+public enum BasaltHealthStatus { Healthy, Degraded, Unhealthy }
+public enum BasaltWorkerStatus { Alive, Stale }
+
+/// <summary>Diagnostic worker information derived from current execution leases. It does not participate in correctness.</summary>
+public sealed class BasaltWorkerInfo
+{
+    public string WorkerId { get; internal set; } = string.Empty;
+    public BasaltWorkerStatus Status { get; internal set; }
+    public DateTimeOffset? LeaseExpiresAt { get; internal set; }
+    public int ActiveExecutionCount { get; internal set; }
+}
+
+/// <summary>Read-only storage and queue health snapshot.</summary>
+public sealed class BasaltHealth
+{
+    public BasaltHealth(BasaltHealthStatus status, string provider, DateTimeOffset checkedAt, BasaltQueueStats queue,
+        IReadOnlyList<BasaltWorkerInfo> workers, string? diagnosticMessage)
+    { Status=status; Provider=provider; CheckedAt=checkedAt; Queue=queue; Workers=workers; DiagnosticMessage=diagnosticMessage; }
+    public BasaltHealthStatus Status { get; }
+    public string Provider { get; }
+    public DateTimeOffset CheckedAt { get; }
+    public BasaltQueueStats Queue { get; }
+    public IReadOnlyList<BasaltWorkerInfo> Workers { get; }
+    public string? DiagnosticMessage { get; }
 }
 
 public sealed class BasaltStats
@@ -82,6 +159,8 @@ public sealed class BasaltScheduleInfo
     public ulong Revision { get; set; }
     public MisfirePolicy MisfirePolicy { get; set; }
     public OverlapPolicy OverlapPolicy { get; set; }
+    public string? ScheduleKey { get; internal set; }
+    public string? JobKey { get; internal set; }
 }
 
 internal static class UnixTime

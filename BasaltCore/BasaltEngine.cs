@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
+using System.Text;
 using BasaltCore.Native;
 
 namespace BasaltCore;
@@ -115,7 +116,7 @@ public sealed class BasaltEngine : IDisposable
     public BasaltExecutionInfo GetExecution(ulong executionId)
     {
         ThrowIfDisposed(); if(_database==null)return _storage!.GetExecution(executionId); BasaltDatabase.Check(NativeMethods.basalt_execution_get(_database.Handle, executionId, out var value));
-        return new BasaltExecutionInfo(value.ExecutionId, value.JobDefinitionId, value.ScheduleId, value.WorkflowId, value.State, value.CreatedAt, value.EligibleAt, value.StartedAt, value.FinishedAt, value.Priority, value.Attempt, value.MaxAttempts, value.Revision, value.LeaseExpiresAt, value.FencingToken);
+        return new BasaltExecutionInfo(value.ExecutionId, value.JobDefinitionId, value.ScheduleId, value.WorkflowId, value.State, value.CreatedAt, value.EligibleAt, value.StartedAt, value.FinishedAt, value.Priority, value.Attempt, value.MaxAttempts, value.Revision, value.LeaseExpiresAt, value.FencingToken, value.WorkerInstanceId);
     }
 
     public IReadOnlyList<ulong> ListExecutionIds()
@@ -129,6 +130,80 @@ public sealed class BasaltEngine : IDisposable
     {
         if(take<1||take>1000)throw new ArgumentOutOfRangeException(nameof(take));ThrowIfDisposed();if(_database==null)return _storage!.ListExecutions(take,afterExecutionId);
         var result=new List<BasaltExecutionInfo>(take);foreach(ulong id in ListExecutionIds()){if(id<=afterExecutionId)continue;try{result.Add(GetExecution(id));}catch(BasaltException error) when(error.Result==JobDbResult.NotFound){continue;}if(result.Count==take)break;}return result;
+    }
+
+    /// <summary>Returns a bounded management page filtered by durable execution metadata.</summary>
+    public IReadOnlyList<BasaltExecutionInfo> ListExecutions(ExecutionQuery query)
+    {
+        if (query == null) throw new ArgumentNullException(nameof(query));
+        if (query.Take < 1 || query.Take > 1000) throw new ArgumentOutOfRangeException(nameof(query.Take));
+        return ListAllExecutions().Where(x => x.ExecutionId > query.AfterExecutionId && query.Matches(x)).Take(query.Take).ToArray();
+    }
+
+    /// <summary>Gets current execution counts by state without exposing storage internals.</summary>
+    public BasaltQueueStats GetQueueStats()
+    {
+        var result = new BasaltQueueStats();
+        foreach (var execution in ListAllExecutions()) result.Add(execution.State);
+        return result;
+    }
+
+    /// <summary>Returns worker diagnostics inferred from active leases. Leases and fencing remain the correctness mechanism.</summary>
+    public IReadOnlyList<BasaltWorkerInfo> ListWorkers()
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        return ListAllExecutions().Where(x => (x.State == ExecutionState.Leased || x.State == ExecutionState.Running) && x.WorkerInstanceId != null)
+            .GroupBy(x => x.WorkerInstanceId!)
+            .Select(group => new BasaltWorkerInfo
+            {
+                WorkerId = group.Key,
+                ActiveExecutionCount = group.Count(),
+                LeaseExpiresAt = group.Max(x => x.LeaseExpiresAt),
+                Status = group.Any(x => x.LeaseExpiresAt.HasValue && x.LeaseExpiresAt.Value <= now) ? BasaltWorkerStatus.Stale : BasaltWorkerStatus.Alive
+            }).OrderBy(x => x.WorkerId, StringComparer.Ordinal).ToArray();
+    }
+
+    /// <summary>Returns a non-destructive provider, queue, and lease diagnostic snapshot.</summary>
+    public BasaltHealth GetHealth()
+    {
+        var checkedAt = DateTimeOffset.UtcNow;
+        try
+        {
+            VerifyHealth();
+            var queue = GetQueueStats(); var workers = ListWorkers();
+            bool stale = workers.Any(x => x.Status == BasaltWorkerStatus.Stale);
+            bool anomalous = queue.Failed != 0 || queue.Dead != 0 || stale;
+            return new BasaltHealth(anomalous ? BasaltHealthStatus.Degraded : BasaltHealthStatus.Healthy,
+                _database == null ? _storage!.ProviderName : "Embedded", checkedAt, queue, workers,
+                anomalous ? "The queue contains failed, dead, or stale leased work." : null);
+        }
+        catch (Exception error)
+        {
+            return new BasaltHealth(BasaltHealthStatus.Unhealthy, _database == null ? _storage!.ProviderName : "Embedded",
+                checkedAt, new BasaltQueueStats(), Array.Empty<BasaltWorkerInfo>(), error.Message);
+        }
+    }
+
+    private IReadOnlyList<BasaltExecutionInfo> ListAllExecutions()
+    {
+        ThrowIfDisposed();
+        if (_database != null)
+        {
+            var result = new List<BasaltExecutionInfo>();
+            foreach (ulong id in ListExecutionIds())
+                try { result.Add(GetExecution(id)); } catch (BasaltException error) when (error.Result == JobDbResult.NotFound) { }
+            return result.OrderBy(x => x.ExecutionId).ToArray();
+        }
+        var values = new List<BasaltExecutionInfo>(); ulong after = 0;
+        while (true)
+        {
+            var page = _storage!.ListExecutions(1000, after);
+            if (page.Count == 0) break;
+            values.AddRange(page); ulong last = page[page.Count - 1].ExecutionId;
+            if (last <= after || page.Count < 1000) break;
+            after = last;
+        }
+        return values.OrderBy(x => x.ExecutionId).ToArray();
     }
 
     public void Cancel(ulong executionId, ulong expectedRevision) { ThrowIfDisposed(); if(_database==null){_storage!.Cancel(executionId,expectedRevision);return;} BasaltDatabase.Check(NativeMethods.basalt_execution_cancel(_database.Handle, executionId, expectedRevision)); }
@@ -150,6 +225,38 @@ public sealed class BasaltEngine : IDisposable
     }
     public void VerifyHealth() { ThrowIfDisposed(); if(_database==null){_storage!.VerifyHealth();return;} BasaltDatabase.Check(NativeMethods.basalt_db_health(_database.Handle)); }
 
+    internal void StoreManagementText(uint recordType, ulong recordId, string value)
+    {
+        ThrowIfDisposed(); if (string.IsNullOrWhiteSpace(value)) throw new ArgumentException("A management value is required.", nameof(value));
+        byte[] bytes = Encoding.UTF8.GetBytes(value); JobDbResult result = NativeMethods.basalt_management_record_create(_core.DangerousGetHandle(), recordType, recordId, bytes, (uint)bytes.Length);
+        if (result == JobDbResult.AlreadyExists)
+        {
+            string existing = GetManagementText(recordType, recordId);
+            if (StringComparer.Ordinal.Equals(existing, value)) return;
+            throw new BasaltException(JobDbResult.Conflict);
+        }
+        BasaltDatabase.Check(result);
+    }
+
+    internal IReadOnlyDictionary<ulong, string> ListManagementText(uint recordType)
+    {
+        ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_management_record_list(_core.DangerousGetHandle(), recordType, null, UIntPtr.Zero, out var needed));
+        if (needed.ToUInt64() > int.MaxValue) throw new BasaltException(JobDbResult.Limit);
+        var ids = new ulong[(int)needed.ToUInt64()]; BasaltDatabase.Check(NativeMethods.basalt_management_record_list(_core.DangerousGetHandle(), recordType, ids, (UIntPtr)ids.Length, out var count));
+        var values = new Dictionary<ulong, string>();
+        for (int i = 0; i < (int)Math.Min((ulong)ids.Length, count.ToUInt64()); i++)
+            try { values[ids[i]] = GetManagementText(recordType, ids[i]); } catch (BasaltException error) when (error.Result == JobDbResult.NotFound) { }
+        return values;
+    }
+
+    private string GetManagementText(uint recordType, ulong recordId)
+    {
+        JobDbResult result = NativeMethods.basalt_management_record_get(_core.DangerousGetHandle(), recordType, recordId, null, 0, out uint size);
+        if (result != JobDbResult.Limit && result != JobDbResult.Ok) { BasaltDatabase.Check(result); }
+        byte[] bytes = new byte[size]; BasaltDatabase.Check(NativeMethods.basalt_management_record_get(_core.DangerousGetHandle(), recordType, recordId, bytes, size, out uint actual));
+        return Encoding.UTF8.GetString(bytes, 0, checked((int)actual));
+    }
+
     public void CreateSchedule(ulong scheduleId, ulong jobType, uint scheduleType, DateTimeOffset firstFireAt, TimeSpan interval, uint intervalMode, ulong maxOccurrences, ReadOnlyMemory<byte> payload, uint payloadVersion = 1, string? cronExpression = null, string? timezone = null, uint misfirePolicy = 2, uint overlapPolicy = 1, uint catchUpMax = 0, DateTimeOffset? endAt=null)
     { ThrowIfDisposed(); var bytes=payload.ToArray(); BasaltDatabase.Check(NativeMethods.basalt_schedule_create_v2(_core.DangerousGetHandle(),scheduleId,jobType,scheduleType,firstFireAt.ToUnixTimeSeconds(),endAt?.ToUnixTimeSeconds()??0,checked((long)interval.TotalSeconds),intervalMode,maxOccurrences,bytes,(uint)bytes.Length,payloadVersion,cronExpression,timezone,misfirePolicy,overlapPolicy,catchUpMax)); }
     public BasaltScheduleInfo GetSchedule(ulong scheduleId) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_schedule_get(_core.DangerousGetHandle(),scheduleId,out var s)); return new BasaltScheduleInfo{ScheduleId=s.ScheduleId,JobDefinitionId=s.JobDefinitionId,Type=(ScheduleType)s.ScheduleType,Enabled=s.Enabled!=0,TimezoneReference=s.TimezoneReference,Interval=TimeSpan.FromSeconds(s.Interval),IntervalMode=(IntervalMode)s.IntervalMode,CatchUpMax=s.CatchUpMax,StartAt=UnixTime.Required(s.StartAt),EndAt=UnixTime.Optional(s.EndAt),LastFireAt=UnixTime.Optional(s.LastFireAt),NextFireAt=UnixTime.Optional(s.NextFireAt),OccurrenceCount=s.OccurrenceCount,MaxOccurrences=s.MaxOccurrences,Revision=s.Revision,MisfirePolicy=(MisfirePolicy)s.MisfirePolicy,OverlapPolicy=(OverlapPolicy)s.OverlapPolicy}; }
@@ -161,6 +268,17 @@ public sealed class BasaltEngine : IDisposable
          var ids = new ulong[(int)needed.ToUInt64()]; BasaltDatabase.Check(NativeMethods.basalt_schedule_list(_core.DangerousGetHandle(), ids, (UIntPtr)ids.Length, out var count));
          if ((ulong)ids.Length != count.ToUInt64()) Array.Resize(ref ids, (int)count.ToUInt64()); return ids;
      }
+    public IReadOnlyList<BasaltScheduleInfo> ListSchedules(int take = 100, ulong afterScheduleId = 0)
+    {
+        if (take < 1 || take > 1000) throw new ArgumentOutOfRangeException(nameof(take));
+        var result = new List<BasaltScheduleInfo>(take);
+        foreach (ulong id in ListScheduleIds().Where(x => x > afterScheduleId).OrderBy(x => x))
+        {
+            try { result.Add(GetSchedule(id)); } catch (BasaltException error) when (error.Result == JobDbResult.NotFound) { }
+            if (result.Count == take) break;
+        }
+        return result;
+    }
      public void PauseSchedule(ulong scheduleId, ulong expectedRevision) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_schedule_pause(_core.DangerousGetHandle(),scheduleId,expectedRevision)); }
     public void ResumeSchedule(ulong scheduleId, ulong expectedRevision) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_schedule_resume(_core.DangerousGetHandle(),scheduleId,expectedRevision)); }
     public void RemoveSchedule(ulong scheduleId, ulong expectedRevision) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_schedule_remove(_core.DangerousGetHandle(),scheduleId,expectedRevision)); }
@@ -178,6 +296,17 @@ public sealed class BasaltEngine : IDisposable
         lock (_lifecycle) { _core.Dispose(); _handlers.Clear(); if (_databaseRetained) _database!.Release(); if(_storageRetained)_storage!.ReleaseManaged(); } GC.SuppressFinalize(this);
     }
     public BasaltWorkflowStatus GetWorkflow(ulong workflowId) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_workflow_get(_core.DangerousGetHandle(),workflowId,out var s)); return new BasaltWorkflowStatus{WorkflowId=s.WorkflowId,NodeCount=s.NodeCount,ReadyCount=s.ReadyCount,BlockedCount=s.BlockedCount,RunningCount=s.RunningCount,TerminalCount=s.TerminalCount,FailedCount=s.FailedCount,CancelledCount=s.CancelledCount,CancelRequested=s.CancelRequested!=0}; }
+    public IReadOnlyList<BasaltWorkflowStatus> ListWorkflows(int take = 100, ulong afterWorkflowId = 0)
+    {
+        if (take < 1 || take > 1000) throw new ArgumentOutOfRangeException(nameof(take));
+        var result = new List<BasaltWorkflowStatus>(take);
+        foreach (ulong id in ListAllExecutions().Where(x => x.WorkflowId != 0 && x.WorkflowId > afterWorkflowId).Select(x => x.WorkflowId).Distinct().OrderBy(x => x))
+        {
+            try { result.Add(GetWorkflow(id)); } catch (BasaltException error) when (error.Result == JobDbResult.NotFound) { }
+            if (result.Count == take) break;
+        }
+        return result;
+    }
     public void CancelWorkflow(ulong workflowId) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_workflow_cancel(_core.DangerousGetHandle(),workflowId)); }
     private void ThrowIfDisposed() { if (Volatile.Read(ref _disposed) != 0) throw new ObjectDisposedException(nameof(BasaltEngine)); }
 }

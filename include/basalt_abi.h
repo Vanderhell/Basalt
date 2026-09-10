@@ -82,6 +82,9 @@ jobdb_result_t basalt_core_schedule_create(jobcore_t *core, const jobcore_schedu
 jobdb_result_t basalt_core_workflow_submit(jobcore_t *core, uint64_t workflow_id, const basalt_workflow_node_v1_t *nodes, uint32_t count, uint32_t policy, int64_t now);
 jobdb_result_t basalt_workflow_get(jobcore_t *core, uint64_t workflow_id, basalt_workflow_status_v1_t *out_status);
 jobdb_result_t basalt_workflow_cancel(jobcore_t *core, uint64_t workflow_id);
+jobdb_result_t basalt_management_record_create(jobcore_t *core, uint32_t record_type, uint64_t record_id, const void *payload, uint32_t payload_size);
+jobdb_result_t basalt_management_record_get(jobcore_t *core, uint32_t record_type, uint64_t record_id, void *payload, uint32_t capacity, uint32_t *out_size);
+jobdb_result_t basalt_management_record_list(jobcore_t *core, uint32_t record_type, uint64_t *ids, size_t capacity, size_t *out_count);
 
 #ifdef __cplusplus
 }

@@ -44,5 +44,11 @@ jobs:
       - name: Build WPF .NET Framework 4.7.2 consumer
         run: dotnet build consumer-wpf/ConsumerWpf.csproj -c Debug
 
+      - name: Build dashboard and run observability smoke
+        run: |
+          dotnet build BasaltDashboard/BasaltDashboard.csproj -c Debug
+          dotnet build observability-smoke/ObservabilitySmoke.csproj -c Debug
+          dotnet run --project observability-smoke/ObservabilitySmoke.csproj -c Debug --no-build
+
       - name: Record SQL integration limitation
         run: Add-Content $env:GITHUB_STEP_SUMMARY "SQL integration is not run in hosted CI because it requires a provisioned SQL Server and restricted test identity. The provider is compiled above."
