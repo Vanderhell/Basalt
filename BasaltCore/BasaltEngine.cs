@@ -128,7 +128,7 @@ public sealed class BasaltEngine : IDisposable
     public IReadOnlyList<BasaltExecutionInfo> ListExecutions(int take=100,ulong afterExecutionId=0)
     {
         if(take<1||take>1000)throw new ArgumentOutOfRangeException(nameof(take));ThrowIfDisposed();if(_database==null)return _storage!.ListExecutions(take,afterExecutionId);
-        var result=new List<BasaltExecutionInfo>(take);foreach(ulong id in ListExecutionIds()){if(id<=afterExecutionId)continue;result.Add(GetExecution(id));if(result.Count==take)break;}return result;
+        var result=new List<BasaltExecutionInfo>(take);foreach(ulong id in ListExecutionIds()){if(id<=afterExecutionId)continue;try{result.Add(GetExecution(id));}catch(BasaltException error) when(error.Result==JobDbResult.NotFound){continue;}if(result.Count==take)break;}return result;
     }
 
     public void Cancel(ulong executionId, ulong expectedRevision) { ThrowIfDisposed(); if(_database==null){_storage!.Cancel(executionId,expectedRevision);return;} BasaltDatabase.Check(NativeMethods.basalt_execution_cancel(_database.Handle, executionId, expectedRevision)); }
