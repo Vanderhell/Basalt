@@ -23,7 +23,7 @@ internal sealed class SqlStorageBridge : IDisposable
     {
         _connections=connections;_schema=SqlIdentifier.Quote(options.Schema);_timeout=options.CommandTimeoutSeconds;
         _lostCommitAcknowledgement=options.SimulateLostCommitAcknowledgement;_self=GCHandle.Alloc(this);_providerName=Marshal.StringToHGlobalAnsi("SqlServer");
-        var v=new VTable { AbiVersion=2,Capabilities=7,ProviderName=_providerName };
+        var v=new VTable { AbiVersion=1,Capabilities=7,ProviderName=_providerName };
         Bind(ref v.Retain,new Lifetime(_=>{}));Bind(ref v.Release,new Lifetime(_=>{}));Bind(ref v.Health,new Health(HealthCallback));Bind(ref v.UtcNow,new Clock(ClockCallback));Bind(ref v.Allocate,new Allocate(AllocateCallback));
         Bind(ref v.RecordCreate,new RecordCreate(RecordCreateCallback));Bind(ref v.RecordGet,new RecordGet(RecordGetCallback));Bind(ref v.RecordUpdate,new RecordUpdate(RecordUpdateCallback));Bind(ref v.RecordFree,new RecordFree(RecordFreeCallback));Bind(ref v.ListIds,new ListIds(ListIdsCallback));
         Bind(ref v.Enqueue,new Enqueue(EnqueueCallback));Bind(ref v.EnqueueExtra,new EnqueueExtra(EnqueueExtraCallback));Bind(ref v.EnqueueReceipt,new EnqueueReceipt(EnqueueReceiptCallback));Bind(ref v.ReceiptGet,new ReceiptGet(ReceiptGetCallback));Bind(ref v.ExecutionGet,new ExecutionGet(ExecutionGetCallback));Bind(ref v.Transition,new Transition(TransitionCallback));Bind(ref v.Start,new Start(StartCallback));Bind(ref v.Claim,new Claim(ClaimCallback));Bind(ref v.Renew,new Renew(RenewCallback));Bind(ref v.Complete,new Complete(CompleteCallback));Bind(ref v.Finalize,new Finalize(FinalizeCallback));Bind(ref v.Park,new Park(ParkCallback));Bind(ref v.Retry,new Retry(RetryCallback));

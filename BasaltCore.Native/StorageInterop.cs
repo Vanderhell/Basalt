@@ -48,7 +48,7 @@ public static class StorageInterop
     [StructLayout(LayoutKind.Sequential)] public struct VTable
     {
         public uint AbiVersion,StructSize; public ulong Capabilities; public IntPtr ProviderName;
-        public IntPtr Retain,Release,Health,UtcNow,Allocate,RecordCreate,RecordGet,RecordUpdate,RecordFree,ListIds,Enqueue,EnqueueExtra,EnqueueReceipt,ReceiptGet,ExecutionGet,Transition,Start,Claim,Renew,Complete,Finalize,Park,Retry,ScheduleCreate,ScheduleGet,ScheduleUpdate,SchedulePause,ScheduleResume,ScheduleRemove,ScheduleFire,StatsGet,TxBegin,TxRecord,TxExecution,TxStats,TxCommit,TxRollback;
+        public IntPtr Retain,Release,Health,UtcNow,Allocate,RecordCreate,RecordGet,RecordFree,ListIds,Enqueue,EnqueueExtra,EnqueueReceipt,ReceiptGet,ExecutionGet,Transition,Start,Claim,Renew,Complete,Finalize,Park,Retry,ScheduleCreate,ScheduleGet,ScheduleUpdate,SchedulePause,ScheduleResume,ScheduleRemove,ScheduleFire,StatsGet,TxBegin,TxRecord,TxExecution,TxStats,TxCommit,TxRollback,RecordUpdate;
     }
     private const string Library="basalt_core_shared";
     [DllImport(Library,CallingConvention=CallingConvention.Cdecl)] public static extern JobDbResult basalt_storage_create_v1(ref VTable vtable,IntPtr context,out IntPtr storage);

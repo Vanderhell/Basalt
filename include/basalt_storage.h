@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define BASALT_STORAGE_ABI_VERSION 2u
+#define BASALT_STORAGE_ABI_VERSION 1u
 #define BASALT_STORAGE_CAP_ATOMIC_DOMAIN_OPS UINT64_C(0x1)
 #define BASALT_STORAGE_CAP_PROVIDER_CLOCK UINT64_C(0x2)
 #define BASALT_STORAGE_CAP_BOUNDED_LISTS UINT64_C(0x4)
@@ -32,7 +32,6 @@ typedef struct basalt_storage_vtable_v1 {
     jobdb_result_t (*allocate_execution_id)(void *, uint64_t *);
     jobdb_result_t (*record_create)(void *, uint32_t, uint64_t, const void *, uint32_t);
     jobdb_result_t (*record_get)(void *, uint32_t, uint64_t, jobdb_record_t *);
-    jobdb_result_t (*record_update)(void *, uint32_t, uint64_t, uint64_t, const void *, uint32_t, uint64_t *);
     void (*record_free)(void *, jobdb_record_t *);
     jobdb_result_t (*list_record_ids)(void *, uint32_t, uint64_t *, size_t, size_t *);
     jobdb_result_t (*execution_enqueue)(void *, const jobdb_execution_t *, uint32_t, const void *, uint32_t);
@@ -62,6 +61,8 @@ typedef struct basalt_storage_vtable_v1 {
     jobdb_result_t (*tx_put_stats)(void *, const jobdb_stats_t *, uint64_t, int);
     jobdb_result_t (*tx_commit)(void *);
     void (*tx_rollback)(void *);
+    /* Optional append-only v1 extension for diagnostic management records. */
+    jobdb_result_t (*record_update)(void *, uint32_t, uint64_t, uint64_t, const void *, uint32_t, uint64_t *);
 } basalt_storage_vtable_v1;
 
 jobdb_result_t basalt_storage_create(const basalt_storage_vtable_v1 *, void *, basalt_storage_t **);

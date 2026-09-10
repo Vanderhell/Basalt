@@ -14,9 +14,9 @@ struct basalt_storage_tx { basalt_storage_t *storage; void *provider_tx; };
 
 static int valid_vtable(const basalt_storage_vtable_v1 *v) {
     return v && v->abi_version == BASALT_STORAGE_ABI_VERSION &&
-           v->struct_size >= sizeof(*v) && v->provider_name && *v->provider_name &&
+           v->struct_size >= offsetof(basalt_storage_vtable_v1, record_update) && v->provider_name && *v->provider_name &&
            v->retain && v->release && v->health && v->allocate_execution_id &&
-           v->record_create && v->record_get && v->record_update && v->record_free && v->list_record_ids &&
+           v->record_create && v->record_get && v->record_free && v->list_record_ids &&
            v->execution_enqueue && v->execution_enqueue_extra &&
            v->execution_enqueue_receipt && v->idempotency_get && v->execution_get &&
            v->execution_transition && v->execution_start && v->claim_next &&
@@ -34,7 +34,7 @@ jobdb_result_t basalt_storage_create(const basalt_storage_vtable_v1 *v, void *co
     if (!out || !context || !valid_vtable(v)) return JOBDB_ERR_INVALID_ARGUMENT;
     storage = (basalt_storage_t *)calloc(1, sizeof(*storage));
     if (!storage) return JOBDB_ERR_INTERNAL;
-    memcpy(&storage->api, v, sizeof(*v)); storage->context = context; storage->references = 1;
+    memset(&storage->api,0,sizeof(storage->api)); memcpy(&storage->api, v, v->struct_size < sizeof(storage->api) ? v->struct_size : sizeof(storage->api)); storage->context = context; storage->references = 1;
     v->retain(context); *out = storage; return JOBDB_OK;
 }
 
@@ -124,7 +124,7 @@ jobdb_result_t basalt_storage_utc_now(basalt_storage_t*s,int64_t*o){S_OR_INVALID
 jobdb_result_t basalt_storage_allocate_execution_id(basalt_storage_t*s,uint64_t*o){S_OR_INVALID(s);return s->api.allocate_execution_id(s->context,o);}
 jobdb_result_t basalt_storage_record_create(basalt_storage_t*s,uint32_t t,uint64_t i,const void*p,uint32_t n){S_OR_INVALID(s);return s->api.record_create(s->context,t,i,p,n);}
 jobdb_result_t basalt_storage_record_get(basalt_storage_t*s,uint32_t t,uint64_t i,jobdb_record_t*r){S_OR_INVALID(s);return s->api.record_get(s->context,t,i,r);}
-jobdb_result_t basalt_storage_record_update(basalt_storage_t*s,uint32_t t,uint64_t i,uint64_t r,const void*p,uint32_t n,uint64_t*o){S_OR_INVALID(s);return s->api.record_update(s->context,t,i,r,p,n,o);}
+jobdb_result_t basalt_storage_record_update(basalt_storage_t*s,uint32_t t,uint64_t i,uint64_t r,const void*p,uint32_t n,uint64_t*o){S_OR_INVALID(s);return s->api.record_update?s->api.record_update(s->context,t,i,r,p,n,o):JOBDB_ERR_UNSUPPORTED;}
 void basalt_storage_record_free(basalt_storage_t*s,jobdb_record_t*r){if(s&&r)s->api.record_free(s->context,r);}
 jobdb_result_t basalt_storage_list_record_ids(basalt_storage_t*s,uint32_t t,uint64_t*i,size_t n,size_t*c){S_OR_INVALID(s);return s->api.list_record_ids(s->context,t,i,n,c);}
 jobdb_result_t basalt_storage_execution_enqueue(basalt_storage_t*s,const jobdb_execution_t*e,uint32_t t,const void*p,uint32_t n){S_OR_INVALID(s);return s->api.execution_enqueue(s->context,e,t,p,n);}
