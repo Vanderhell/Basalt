@@ -1,5 +1,9 @@
 # Basalt
 
+<p align="center">
+  <img src="images/logo3.png" alt="Basalt" width="640" />
+</p>
+
 **Durable background jobs for .NET -- embedded when local, SQL Server when shared.**
 
 [![CI](https://github.com/Vanderhell/Basalt/actions/workflows/ci.yml/badge.svg)](https://github.com/Vanderhell/Basalt/actions/workflows/ci.yml)
