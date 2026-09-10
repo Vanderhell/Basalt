@@ -45,4 +45,4 @@ dotnet run --project BasaltDashboard -- C:\data\jobs
 dotnet run --project BasaltDashboard -- --sql "<connection string>"
 ```
 
-The dashboard shows overview queue cards, executions, failed/dead/retrying work, schedules, workflows, observed workers, and cumulative statistics. Its selected execution and schedule controls call the same public `Cancel`, `Requeue`, `PauseSchedule`, `ResumeSchedule`, and `RemoveSchedule` methods available to an application. It does not start workers or modify provider configuration.
+The dashboard shows overview queue cards, executions, failed/dead/retrying work, schedules, workflows, observed workers, and cumulative statistics. The executions view has a state filter and selected-execution lifecycle/ledger detail. Its selected execution and schedule controls call the same public `Cancel`, `Requeue`, `PauseSchedule`, `ResumeSchedule`, and `RemoveSchedule` methods available to an application. It does not start workers or modify provider configuration.

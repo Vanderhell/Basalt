@@ -75,10 +75,15 @@ public sealed class DashboardWindow : Window
     {
         var panel = new DockPanel();
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
+        var states = new ComboBox { Width = 130, Margin = new Thickness(0, 0, 12, 0), ItemsSource = new[] { "All", "Created", "Scheduled", "Ready", "Leased", "Running", "Retry", "Blocked", "Done", "Failed", "Dead", "Cancelled", "Paused" }, SelectedIndex = 0 };
+        states.SelectionChanged += async (_, _) => { _viewModel.ExecutionStateFilter = states.SelectedItem as string; await _viewModel.RefreshAsync(_closing.Token); };
+        actions.Children.Add(states);
         actions.Children.Add(Button("Cancel selected", async (_, _) => await _viewModel.CancelSelectedAsync()));
         actions.Children.Add(Button("Requeue selected", async (_, _) => await _viewModel.RequeueSelectedAsync()));
         DockPanel.SetDock(actions, Dock.Top); panel.Children.Add(actions);
-        var grid = (DataGrid)GridFor("Executions"); grid.SelectionChanged += (_, _) => _viewModel.SelectedExecution = grid.SelectedItem as BasaltExecutionInfo; panel.Children.Add(grid); return panel;
+        var detail = new TextBlock { Padding = new Thickness(12), Background = Brushes.White, TextWrapping = TextWrapping.Wrap, MinHeight = 76 };
+        detail.SetBinding(TextBlock.TextProperty, new Binding(nameof(DashboardViewModel.ExecutionDetailsText))); DockPanel.SetDock(detail, Dock.Bottom); panel.Children.Add(detail);
+        var grid = (DataGrid)GridFor("Executions"); grid.SelectionChanged += async (_, _) => await _viewModel.SelectExecutionAsync(grid.SelectedItem as BasaltExecutionInfo); panel.Children.Add(grid); return panel;
     }
 
     private UIElement SchedulePage()
@@ -109,13 +114,24 @@ public sealed class DashboardWindow : Window
 public sealed class DashboardViewModel : INotifyPropertyChanged
 {
     private readonly BasaltApplication _basalt; private readonly SemaphoreSlim _refresh = new(1, 1);
-    private string _healthText = "Checking health..."; private Brush _healthBrush = Brushes.Gray; private string _statisticsText = string.Empty;
+    private string _healthText = "Checking health..."; private Brush _healthBrush = Brushes.Gray; private string _statisticsText = string.Empty; private string _executionDetailsText = "Select an execution to inspect its durable lifecycle and terminal ledger.";
     public DashboardViewModel(BasaltApplication basalt) => _basalt = basalt;
     public ObservableCollection<DashboardMetric> Metrics { get; } = new(); public ObservableCollection<BasaltExecutionInfo> RecentExecutions { get; } = new(); public ObservableCollection<BasaltExecutionInfo> Executions { get; } = new(); public ObservableCollection<BasaltExecutionInfo> Failures { get; } = new(); public ObservableCollection<BasaltScheduleInfo> Schedules { get; } = new(); public ObservableCollection<BasaltWorkflowStatus> Workflows { get; } = new(); public ObservableCollection<BasaltWorkerInfo> Workers { get; } = new();
-    public string HealthText { get => _healthText; private set { _healthText=value; OnChanged(); } } public Brush HealthBrush { get => _healthBrush; private set { _healthBrush=value; OnChanged(); } } public string StatisticsText { get => _statisticsText; private set { _statisticsText=value; OnChanged(); } }
+    public string HealthText { get => _healthText; private set { _healthText=value; OnChanged(); } } public Brush HealthBrush { get => _healthBrush; private set { _healthBrush=value; OnChanged(); } } public string StatisticsText { get => _statisticsText; private set { _statisticsText=value; OnChanged(); } } public string ExecutionDetailsText { get => _executionDetailsText; private set { _executionDetailsText=value; OnChanged(); } }
     public event PropertyChangedEventHandler? PropertyChanged; private void OnChanged([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     public BasaltExecutionInfo? SelectedExecution { get; set; }
     public BasaltScheduleInfo? SelectedSchedule { get; set; }
+    public string? ExecutionStateFilter { get; set; }
+
+    public async Task SelectExecutionAsync(BasaltExecutionInfo? value)
+    {
+        SelectedExecution = value;
+        if (value == null) { ExecutionDetailsText = "Select an execution to inspect its durable lifecycle and terminal ledger."; return; }
+        string ledger = "No terminal ledger.";
+        if (value.State is ExecutionState.Done or ExecutionState.Failed or ExecutionState.Dead or ExecutionState.Cancelled)
+            try { var item = await Task.Run(() => _basalt.GetLedger(value.ExecutionId)); ledger = $"Result: {item.FinalState}; result code {item.ResultCode}; error code {item.ErrorCode}"; } catch (BasaltException) { }
+        ExecutionDetailsText = $"Execution {value.ExecutionId}  |  {value.JobKey ?? value.JobDefinitionId.ToString()}  |  {value.State}  |  attempt {value.Attempt}/{value.MaxAttempts}\nCreated: {value.CreatedAt:u}; eligible: {value.EligibleAt:u}; started: {value.StartedAt:u}; finished: {value.FinishedAt:u}\nQueue wait: {value.QueueWait}; duration: {value.ExecutionDuration}; lease: {value.LeaseExpiresAt:u}; fence: {value.FencingToken}; revision: {value.Revision}\n{ledger}";
+    }
 
     public async Task CancelSelectedAsync() { var value = SelectedExecution; if (value == null) return; await Task.Run(() => _basalt.Cancel(value.ExecutionId)); await RefreshAsync(CancellationToken.None); }
     public async Task RequeueSelectedAsync() { var value = SelectedExecution; if (value == null) return; await Task.Run(() => _basalt.Requeue(value.ExecutionId)); await RefreshAsync(CancellationToken.None); }
@@ -128,7 +144,7 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
         if (!await _refresh.WaitAsync(0, cancellationToken).ConfigureAwait(true)) return;
         try
         {
-            var snapshot = await Task.Run(() => new DashboardSnapshot(_basalt), cancellationToken).ConfigureAwait(true);
+            var snapshot = await Task.Run(() => new DashboardSnapshot(_basalt, ParseState(ExecutionStateFilter)), cancellationToken).ConfigureAwait(true);
             HealthText = $"{snapshot.Health.Status.ToString().ToUpperInvariant()}  |  {snapshot.Health.Provider}";
             HealthBrush = snapshot.Health.Status == BasaltHealthStatus.Healthy ? Brushes.ForestGreen : snapshot.Health.Status == BasaltHealthStatus.Degraded ? Brushes.DarkOrange : Brushes.Firebrick;
             Replace(Metrics, snapshot.Metrics); Replace(RecentExecutions, snapshot.Recent); Replace(Executions, snapshot.Executions); Replace(Failures, snapshot.Failures); Replace(Schedules, snapshot.Schedules); Replace(Workflows, snapshot.Workflows); Replace(Workers, snapshot.Workers);
@@ -140,17 +156,18 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
     }
 
     private static void Replace<T>(ObservableCollection<T> target, IEnumerable<T> source) { target.Clear(); foreach (var item in source) target.Add(item); }
+    private static ExecutionState? ParseState(string? value) => Enum.TryParse<ExecutionState>(value, out var state) ? state : null;
 }
 
 public sealed class DashboardMetric { public DashboardMetric(string text) => Text = text; public string Text { get; } }
 
 internal sealed class DashboardSnapshot
 {
-    public DashboardSnapshot(BasaltApplication basalt)
+    public DashboardSnapshot(BasaltApplication basalt, ExecutionState? stateFilter)
     {
         Health = basalt.GetHealth(); var stats = basalt.GetStats();
         Metrics = new[] { new DashboardMetric($"READY\n{Health.Queue.Ready}"), new DashboardMetric($"RUNNING\n{Health.Queue.Running}"), new DashboardMetric($"RETRY\n{Health.Queue.Retry}"), new DashboardMetric($"SCHEDULED\n{Health.Queue.Scheduled}"), new DashboardMetric($"BLOCKED\n{Health.Queue.Blocked}"), new DashboardMetric($"DEAD\n{Health.Queue.Dead}") };
-        Recent = basalt.ListExecutions(new ExecutionQuery { Take = 25 }); Executions = basalt.ListExecutions(new ExecutionQuery { Take = 250 }); Failures = basalt.ListExecutions(new ExecutionQuery { States = new[] { ExecutionState.Failed, ExecutionState.Dead, ExecutionState.Retry }, Take = 250 });
+        Recent = basalt.ListExecutions(new ExecutionQuery { Take = 25 }); Executions = basalt.ListExecutions(new ExecutionQuery { States = stateFilter.HasValue ? new[] { stateFilter.Value } : null, Take = 250 }); Failures = basalt.ListExecutions(new ExecutionQuery { States = new[] { ExecutionState.Failed, ExecutionState.Dead, ExecutionState.Retry }, Take = 250 });
         Schedules = basalt.ListSchedules(250); Workflows = basalt.ListWorkflows(250); Workers = basalt.ListWorkers();
         Statistics = $"Submitted: {stats.SubmittedTotal}\nCompleted: {stats.CompletedTotal}\nFailed: {stats.FailedTotal}\nRetried: {stats.RetriedTotal}\nRecovered: {stats.RecoveredTotal}";
     }
