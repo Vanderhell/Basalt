@@ -12,6 +12,7 @@ try
         executionId = await basalt.EnqueueAsync(new ProbeJob(1));
         var queue = basalt.GetQueueStats();
         Require(queue.Ready == 1, "Expected one ready execution.");
+        Require(basalt.GetPerformanceStats().Completed == 0, "Embedded performance snapshot was not available.");
 
         var page = basalt.ListExecutions(new ExecutionQuery { States = new[] { ExecutionState.Ready }, Take = 10 });
         Require(page.Count == 1 && page[0].ExecutionId == executionId, "State query did not return the queued execution.");
@@ -20,6 +21,7 @@ try
         await basalt.EveryAsync("diagnostics.schedule", TimeSpan.FromMinutes(5), new ProbeJob(2));
         var schedules = basalt.ListSchedules();
         Require(schedules.Count == 1 && schedules[0].ScheduleKey == "diagnostics.schedule", "Schedule list did not return the stable schedule key.");
+        Require(schedules[0].Status == "Active", "Schedule management status was not projected.");
         basalt.PauseSchedule(schedules[0].ScheduleId);
         Require(!basalt.GetSchedule(schedules[0].ScheduleId).Enabled, "Pause management action did not persist.");
         basalt.ResumeSchedule(schedules[0].ScheduleId);
@@ -28,6 +30,8 @@ try
         await basalt.Workflow("diagnostics.workflow").Add("first", new ProbeJob(3)).Then("second", new ProbeJob(4)).SubmitAsync();
         var workflows = basalt.ListWorkflows();
         Require(workflows.Count == 1 && workflows[0].WorkflowKey == "diagnostics.workflow" && workflows[0].NodeCount == 2, "Workflow list did not return the submitted workflow.");
+        var nodes = basalt.ListWorkflowNodes(workflows[0].WorkflowId).OrderBy(x => x.Name).ToArray();
+        Require(nodes.Length == 2 && nodes[0].Name == "first" && nodes[1].Name == "second" && nodes[1].Dependencies.Single() == nodes[0].NodeId, "Workflow node graph was not projected.");
         Require(basalt.ListExecutions(new ExecutionQuery { WorkflowId = workflows[0].WorkflowId, Take = 10 }).Count == 2, "Workflow execution filter did not return workflow nodes.");
         Require(basalt.ListExecutions(new ExecutionQuery { JobDefinitionId = page[0].JobDefinitionId, Take = 10 }).Count >= 1, "Job execution filter did not return the registered job.");
         Require(basalt.ListExecutions(new ExecutionQuery { CreatedFrom = DateTimeOffset.UtcNow.AddMinutes(1), Take = 10 }).Count == 0, "Creation time filter did not exclude older work.");
@@ -45,7 +49,9 @@ try
     {
         Require(observer.GetExecution(executionId).JobKey == "diagnostics.probe", "Persisted job key was not available after reopen.");
         Require(observer.ListSchedules().Single().ScheduleKey == "diagnostics.schedule", "Persisted schedule key was not available after reopen.");
+        Require(observer.ListSchedules().Single().Status == "Active", "Persisted schedule status was not available after reopen.");
         Require(observer.ListWorkflows().Single().WorkflowKey == "diagnostics.workflow", "Persisted workflow key was not available after reopen.");
+        Require(observer.ListWorkflowNodes("diagnostics.workflow").Count == 2, "Persisted workflow node graph was not available after reopen.");
     }
     Console.WriteLine("Basalt observability smoke passed");
 }

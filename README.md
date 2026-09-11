@@ -92,6 +92,8 @@ Workflows are static durable DAGs. Explicit dependencies and dependency-failure 
 
 `BasaltDashboard` is a separate WPF management console for health, queue state, executions, failures, schedules, workflows, workers, and cumulative statistics. It uses the same storage-neutral public Basalt API, never Embedded files or SQL Server tables directly.
 
+> Dashboard preview placeholder — the included console is intentionally shipped as source so it can be opened against an application's Embedded directory or SQL Server schema.
+
 ```text
 dotnet run --project BasaltDashboard -- C:\data\jobs
 dotnet run --project BasaltDashboard -- --sql "<connection string>"

@@ -130,6 +130,16 @@ public sealed class BasaltStats
     public ulong RetriedTotal { get; } public ulong CancelledTotal { get; } public ulong DeadTotal { get; } public ulong RecoveredTotal { get; }
 }
 
+/// <summary>Operational rates and durations calculated from the durable execution history.</summary>
+public sealed class BasaltPerformanceStats
+{
+    public BasaltPerformanceStats(ulong completed, ulong failed, ulong retried, TimeSpan? averageExecutionDuration, TimeSpan? averageQueueWait)
+    { Completed=completed; Failed=failed; Retried=retried; AverageExecutionDuration=averageExecutionDuration; AverageQueueWait=averageQueueWait; var terminal=completed+failed; SuccessRate=terminal==0?0:(double)completed/terminal; FailureRate=terminal==0?0:(double)failed/terminal; RetryRate=(completed+failed)==0?0:(double)retried/(completed+failed); }
+    public ulong Completed { get; } public ulong Failed { get; } public ulong Retried { get; }
+    public double SuccessRate { get; } public double FailureRate { get; } public double RetryRate { get; }
+    public TimeSpan? AverageExecutionDuration { get; } public TimeSpan? AverageQueueWait { get; }
+}
+
 /// <summary>Records the terminal outcome of an execution.</summary>
 public sealed class BasaltLedgerEntry
 {
@@ -169,6 +179,9 @@ public sealed class BasaltScheduleInfo
     public OverlapPolicy OverlapPolicy { get; set; }
     public string? ScheduleKey { get; internal set; }
     public string? JobKey { get; internal set; }
+    public string? CronExpression { get; internal set; }
+    public string? TimeZoneId { get; internal set; }
+    public string Status => !Enabled ? "Paused" : EndAt.HasValue && EndAt < DateTimeOffset.UtcNow ? "Expired" : MaxOccurrences != 0 && OccurrenceCount >= MaxOccurrences ? "Completed" : "Active";
 }
 
 internal static class UnixTime

@@ -15,6 +15,7 @@ public sealed class SqlServerStorage : BasaltStorage
     public override IReadOnlyList<BasaltExecutionInfo> ListExecutions(int take=100,ulong afterExecutionId=0)=>Bridge.ManagementListExecutions(take,afterExecutionId);
     public override IReadOnlyList<BasaltExecutionInfo> ListExecutions(ExecutionQuery query)=>Bridge.ManagementListExecutions(query);
     public override BasaltQueueStats GetQueueStats()=>Bridge.ManagementGetQueueStats();
+    public override BasaltPerformanceStats GetPerformanceStats()=>Bridge.ManagementGetPerformanceStats();
     public override BasaltStats GetStats()=>Bridge.ManagementGetStats();
     public override BasaltLedgerEntry GetLedger(ulong executionId)=>Bridge.ManagementGetLedger(executionId);
     public override void Cancel(ulong executionId,ulong expectedRevision)=>Bridge.ManagementCancel(executionId,expectedRevision);

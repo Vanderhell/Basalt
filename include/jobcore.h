@@ -37,6 +37,8 @@ typedef struct jobcore_retry_spec { jobcore_retry_policy_t policy; uint32_t max_
 typedef enum jobcore_dependency_policy { JOBCORE_DEP_BLOCK = 1, JOBCORE_DEP_CANCEL, JOBCORE_DEP_CONTINUE, JOBCORE_DEP_FAIL_WORKFLOW } jobcore_dependency_policy_t;
 typedef struct jobcore_workflow_node { uint64_t node_id, job_type; const void *payload; uint32_t payload_size, payload_version; uint32_t dependency_count; uint64_t dependencies[8]; } jobcore_workflow_node_t;
 typedef struct jobcore_workflow_status { uint64_t workflow_id; uint32_t node_count, ready_count, blocked_count, running_count, terminal_count, failed_count, cancelled_count, cancel_requested; } jobcore_workflow_status_t;
+/* Read-only projection of the persisted workflow graph. Dependencies are execution ids. */
+typedef struct jobcore_workflow_node_view { uint64_t node_id, execution_id; uint32_t dependency_count, policy; uint64_t dependencies[8]; } jobcore_workflow_node_view_t;
 typedef struct jobcore_schedule_spec {
     uint64_t schedule_id;
     uint64_t job_type;
@@ -75,6 +77,7 @@ jobdb_result_t jobcore_enqueue_idempotent(jobcore_t *, const char *, uint64_t, c
 jobdb_result_t jobcore_enqueue_idempotent_with_retry(jobcore_t *, const char *, uint64_t, const void *, uint32_t, uint32_t, int64_t, const jobcore_retry_spec_t *, uint64_t *);
 jobdb_result_t jobcore_workflow_submit(jobcore_t *, uint64_t, const jobcore_workflow_node_t *, size_t, jobcore_dependency_policy_t, int64_t);
 jobdb_result_t jobcore_workflow_get(jobcore_t *, uint64_t, jobcore_workflow_status_t *);
+jobdb_result_t jobcore_workflow_node_list(jobcore_t *, uint64_t, jobcore_workflow_node_view_t *, size_t, size_t *);
 jobdb_result_t jobcore_workflow_cancel(jobcore_t *, uint64_t);
 jobdb_result_t jobcore_schedule_create(jobcore_t *, const jobcore_schedule_spec_t *);
 jobdb_result_t jobcore_schedule_create_ex(jobcore_t *, const jobcore_schedule_spec_t *, int64_t end_at);

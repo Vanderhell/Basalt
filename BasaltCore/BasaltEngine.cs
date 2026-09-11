@@ -278,6 +278,13 @@ public sealed class BasaltEngine : IDisposable
     public void Requeue(ulong executionId, ulong expectedRevision) { ThrowIfDisposed(); if(_database==null){_storage!.Requeue(executionId,expectedRevision);return;} BasaltDatabase.Check(NativeMethods.basalt_execution_requeue(_database.Handle, executionId, expectedRevision)); }
     public void Requeue(ulong executionId){var current=GetExecution(executionId);Requeue(executionId,current.Revision);}
     public BasaltStats GetStats() { ThrowIfDisposed(); if(_database==null)return _storage!.GetStats(); BasaltDatabase.Check(NativeMethods.basalt_stats_get(_database.Handle, out var s)); return new BasaltStats(s.SubmittedTotal, s.StartedTotal, s.CompletedTotal, s.FailedTotal, s.RetriedTotal, s.CancelledTotal, s.DeadTotal, s.RecoveredTotal); }
+    /// <summary>Returns dashboard performance aggregates. The snapshot is cached briefly so a UI refresh never repeatedly walks embedded history.</summary>
+    public BasaltPerformanceStats GetPerformanceStats()
+    {
+        ThrowIfDisposed(); if(_database==null)return _storage!.GetPerformanceStats(); var executions=ListAllExecutions(); var durations=executions.Where(x=>x.ExecutionDuration.HasValue).Select(x=>x.ExecutionDuration!.Value).ToArray(); var waits=executions.Where(x=>x.QueueWait.HasValue).Select(x=>x.QueueWait!.Value).ToArray(); var stats=GetStats();
+        TimeSpan? Average(TimeSpan[] values)=>values.Length==0?null:TimeSpan.FromTicks((long)values.Average(x=>x.Ticks));
+        return new BasaltPerformanceStats(stats.CompletedTotal,stats.FailedTotal+stats.DeadTotal,stats.RetriedTotal,Average(durations),Average(waits));
+    }
     public BasaltLedgerEntry GetLedger(ulong executionId)
     {
         ThrowIfDisposed(); if(_database==null)return _storage!.GetLedger(executionId); BasaltDatabase.Check(NativeMethods.basalt_ledger_get(_database.Handle, executionId, out var e));
@@ -382,5 +389,15 @@ public sealed class BasaltEngine : IDisposable
         return result;
     }
     public void CancelWorkflow(ulong workflowId) { ThrowIfDisposed(); BasaltDatabase.Check(NativeMethods.basalt_workflow_cancel(_core.DangerousGetHandle(),workflowId)); }
+    public IReadOnlyList<BasaltWorkflowNodeInfo> ListWorkflowNodes(ulong workflowId)
+    {
+        ThrowIfDisposed();
+        BasaltDatabase.Check(NativeMethods.basalt_workflow_node_list(_core.DangerousGetHandle(), workflowId, null, UIntPtr.Zero, out var nativeCount));
+        if (nativeCount == UIntPtr.Zero) return Array.Empty<BasaltWorkflowNodeInfo>();
+        var nodes = new NativeMethods.WorkflowNodeView[(int)nativeCount];
+        BasaltDatabase.Check(NativeMethods.basalt_workflow_node_list(_core.DangerousGetHandle(), workflowId, nodes, nativeCount, out nativeCount));
+        var executionToNode = nodes.ToDictionary(x => x.ExecutionId, x => x.NodeId);
+        return nodes.Select(x => { var execution = GetExecution(x.ExecutionId); return new BasaltWorkflowNodeInfo { NodeId=x.NodeId, ExecutionId=x.ExecutionId, JobDefinitionId=execution.JobDefinitionId, State=execution.State, Dependencies=(x.Dependencies ?? Array.Empty<ulong>()).Take((int)x.DependencyCount).Select(id => executionToNode.TryGetValue(id, out var nodeId) ? nodeId : id).ToArray() }; }).ToArray();
+    }
     private void ThrowIfDisposed() { if (Volatile.Read(ref _disposed) != 0) throw new ObjectDisposedException(nameof(BasaltEngine)); }
 }

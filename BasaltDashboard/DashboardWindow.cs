@@ -45,7 +45,7 @@ public sealed class DashboardWindow : Window
         tabs.Items.Add(Tab("Jobs / Executions", ExecutionPage()));
         tabs.Items.Add(Tab("Failed & Dead", GridFor("Failures")));
         tabs.Items.Add(Tab("Schedules", SchedulePage()));
-        tabs.Items.Add(Tab("Workflows", GridFor("Workflows")));
+        tabs.Items.Add(Tab("Workflows", WorkflowPage()));
         tabs.Items.Add(Tab("Workers", GridFor("Workers")));
         tabs.Items.Add(Tab("Statistics", Statistics()));
         root.Children.Add(tabs); return root;
@@ -97,6 +97,13 @@ public sealed class DashboardWindow : Window
         var grid = (DataGrid)GridFor("Schedules"); grid.SelectionChanged += (_, _) => _viewModel.SelectedSchedule = grid.SelectedItem as BasaltScheduleInfo; panel.Children.Add(grid); return panel;
     }
 
+    private UIElement WorkflowPage()
+    {
+        var panel = new Grid(); panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        var workflows = (DataGrid)GridFor("Workflows"); workflows.SelectionChanged += async (_, _) => await _viewModel.SelectWorkflowAsync(workflows.SelectedItem as BasaltWorkflowStatus); Grid.SetRow(workflows, 0); panel.Children.Add(workflows);
+        var nodes = (DataGrid)GridFor("WorkflowNodes"); Grid.SetRow(nodes, 1); panel.Children.Add(nodes); return panel;
+    }
+
     private static Button Button(string text, RoutedEventHandler handler)
     {
         var button = new Button { Content = text, Margin = new Thickness(0, 0, 8, 0), Padding = new Thickness(10, 5, 10, 5), MinWidth = 108, IsDefault = false };
@@ -116,12 +123,18 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
     private readonly BasaltApplication _basalt; private readonly SemaphoreSlim _refresh = new(1, 1);
     private string _healthText = "Checking health..."; private Brush _healthBrush = Brushes.Gray; private string _statisticsText = string.Empty; private string _executionDetailsText = "Select an execution to inspect its durable lifecycle and terminal ledger.";
     public DashboardViewModel(BasaltApplication basalt) => _basalt = basalt;
-    public ObservableCollection<DashboardMetric> Metrics { get; } = new(); public ObservableCollection<BasaltExecutionInfo> RecentExecutions { get; } = new(); public ObservableCollection<BasaltExecutionInfo> Executions { get; } = new(); public ObservableCollection<BasaltExecutionInfo> Failures { get; } = new(); public ObservableCollection<BasaltScheduleInfo> Schedules { get; } = new(); public ObservableCollection<BasaltWorkflowStatus> Workflows { get; } = new(); public ObservableCollection<BasaltWorkerInfo> Workers { get; } = new();
+    public ObservableCollection<DashboardMetric> Metrics { get; } = new(); public ObservableCollection<BasaltExecutionInfo> RecentExecutions { get; } = new(); public ObservableCollection<BasaltExecutionInfo> Executions { get; } = new(); public ObservableCollection<BasaltExecutionInfo> Failures { get; } = new(); public ObservableCollection<BasaltScheduleInfo> Schedules { get; } = new(); public ObservableCollection<BasaltWorkflowStatus> Workflows { get; } = new(); public ObservableCollection<BasaltWorkflowNodeInfo> WorkflowNodes { get; } = new(); public ObservableCollection<BasaltWorkerInfo> Workers { get; } = new();
     public string HealthText { get => _healthText; private set { _healthText=value; OnChanged(); } } public Brush HealthBrush { get => _healthBrush; private set { _healthBrush=value; OnChanged(); } } public string StatisticsText { get => _statisticsText; private set { _statisticsText=value; OnChanged(); } } public string ExecutionDetailsText { get => _executionDetailsText; private set { _executionDetailsText=value; OnChanged(); } }
     public event PropertyChangedEventHandler? PropertyChanged; private void OnChanged([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     public BasaltExecutionInfo? SelectedExecution { get; set; }
     public BasaltScheduleInfo? SelectedSchedule { get; set; }
     public string? ExecutionStateFilter { get; set; }
+
+    public async Task SelectWorkflowAsync(BasaltWorkflowStatus? value)
+    {
+        if (value == null) { WorkflowNodes.Clear(); return; }
+        Replace(WorkflowNodes, await Task.Run(() => _basalt.ListWorkflowNodes(value.WorkflowId)));
+    }
 
     public async Task SelectExecutionAsync(BasaltExecutionInfo? value)
     {
@@ -165,11 +178,11 @@ internal sealed class DashboardSnapshot
 {
     public DashboardSnapshot(BasaltApplication basalt, ExecutionState? stateFilter)
     {
-        Health = basalt.GetHealth(); var stats = basalt.GetStats();
+        Health = basalt.GetHealth(); var stats = basalt.GetStats(); var performance = basalt.GetPerformanceStats();
         Metrics = new[] { new DashboardMetric($"READY\n{Health.Queue.Ready}"), new DashboardMetric($"RUNNING\n{Health.Queue.Running}"), new DashboardMetric($"RETRY\n{Health.Queue.Retry}"), new DashboardMetric($"SCHEDULED\n{Health.Queue.Scheduled}"), new DashboardMetric($"BLOCKED\n{Health.Queue.Blocked}"), new DashboardMetric($"DEAD\n{Health.Queue.Dead}") };
         Recent = basalt.ListExecutions(new ExecutionQuery { Take = 25 }); Executions = basalt.ListExecutions(new ExecutionQuery { States = stateFilter.HasValue ? new[] { stateFilter.Value } : null, Take = 250 }); Failures = basalt.ListExecutions(new ExecutionQuery { States = new[] { ExecutionState.Failed, ExecutionState.Dead, ExecutionState.Retry }, Take = 250 });
         Schedules = basalt.ListSchedules(250); Workflows = basalt.ListWorkflows(250); Workers = basalt.ListWorkers();
-        Statistics = $"Submitted: {stats.SubmittedTotal}\nCompleted: {stats.CompletedTotal}\nFailed: {stats.FailedTotal}\nRetried: {stats.RetriedTotal}\nRecovered: {stats.RecoveredTotal}";
+        Statistics = $"Submitted: {stats.SubmittedTotal}\nCompleted: {stats.CompletedTotal}\nFailed: {stats.FailedTotal}\nRetried: {stats.RetriedTotal}\nRecovered: {stats.RecoveredTotal}\n\nSuccess rate: {performance.SuccessRate:P1}\nFailure rate: {performance.FailureRate:P1}\nRetry rate: {performance.RetryRate:P1}\nAverage execution: {performance.AverageExecutionDuration}\nAverage queue wait: {performance.AverageQueueWait}";
     }
     public BasaltHealth Health { get; } public IReadOnlyList<DashboardMetric> Metrics { get; } public IReadOnlyList<BasaltExecutionInfo> Recent { get; } public IReadOnlyList<BasaltExecutionInfo> Executions { get; } public IReadOnlyList<BasaltExecutionInfo> Failures { get; } public IReadOnlyList<BasaltScheduleInfo> Schedules { get; } public IReadOnlyList<BasaltWorkflowStatus> Workflows { get; } public IReadOnlyList<BasaltWorkerInfo> Workers { get; } public string Statistics { get; }
 }

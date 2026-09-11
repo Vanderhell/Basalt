@@ -20,6 +20,8 @@ var failed = basalt.ListExecutions(new ExecutionQuery
 
 `ListExecutions(ExecutionQuery)` provides bounded filtering by state, job definition, schedule, workflow, creation time, and execution-id pagination. SQL Server applies these filters in its provider query; Embedded applies them while paging durable execution IDs and does not materialize the full result set. `GetExecution(id)` exposes lifecycle timestamps, retry attempt, lease expiry, fencing token, and revision. `GetLedger(id)` describes a terminal result; it is not a retry-attempt history.
 
+`GetPerformanceStats()` supplies success, failure, and retry rates plus average execution and queue-wait durations for an operational overview. SQL Server computes this as an aggregate query; Embedded calculates its local read-only snapshot in Core. These are observability aggregates only; they never change retry, lease, or completion behavior.
+
 Stable job, schedule, and workflow keys are stored by Basalt as management metadata when they are registered or created. Existing stores created before this feature may show an ID until that key is registered or created again.
 
 ```csharp
@@ -34,6 +36,8 @@ var workers = basalt.ListWorkers();
 
 Schedule and workflow actions retain Basalt's optimistic revision checks. `Cancel` and `Requeue` are validated by BasaltCore, so a UI race is rejected rather than silently applied to a changed execution.
 
+Schedules expose the persisted timing policy, next and last fire times, occurrence limits, overlap/misfire settings, and a management `Status` (`Active`, `Paused`, `Expired`, or `Completed`). For fluent cron schedules created with the managed API, `CronExpression` and `TimeZoneId` are retained as management metadata. `ListWorkflowNodes(workflowId)` returns the structured static DAG: stable node name and ID, backing execution, job key, current state, and dependency node IDs. It is diagnostic only and cannot alter the workflow graph.
+
 `ListWorkers()` is observational. Starting an engine registers each native worker with a machine name, process ID, start time, and a revision-checked heartbeat refreshed every five seconds. A heartbeat older than fifteen seconds is `Stale`; records older than one day are safely pruned during a later heartbeat sweep. Active execution count and lease expiry are joined from current leases. Heartbeats are never used for recovery or correctness: execution safety continues to depend on leases and fencing; a missing or stale entry never changes an execution state.
 
 ## Dashboard
@@ -45,7 +49,7 @@ dotnet run --project BasaltDashboard -- C:\data\jobs
 dotnet run --project BasaltDashboard -- --sql "<connection string>"
 ```
 
-The dashboard shows overview queue cards, executions, failed/dead/retrying work, schedules, workflows, observed workers, and cumulative statistics. The executions view has a state filter and selected-execution lifecycle/ledger detail. Its selected execution and schedule controls call the same public `Cancel`, `Requeue`, `PauseSchedule`, `ResumeSchedule`, and `RemoveSchedule` methods available to an application. It does not start workers or modify provider configuration.
+The dashboard shows overview queue cards, executions, failed/dead/retrying work, schedules, workflows with a selected structured node/dependency list, observed workers, and cumulative statistics. The executions view has a state filter and selected-execution lifecycle/ledger detail. Its selected execution and schedule controls call the same public `Cancel`, `Requeue`, `PauseSchedule`, `ResumeSchedule`, and `RemoveSchedule` methods available to an application. It does not start workers or modify provider configuration.
 
 `sql-observability-smoke` is a manual SQL parity check. It creates an isolated database named `BasaltObservabilitySmoke_*` and removes it in `finally`, including after a failed assertion.
 

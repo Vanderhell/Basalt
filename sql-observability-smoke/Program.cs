@@ -25,6 +25,7 @@ try
         await handled.Task.WaitAsync(TimeSpan.FromSeconds(15));
         await WaitForAsync(() => basalt.GetExecution(executionId).State == ExecutionState.Done, TimeSpan.FromSeconds(10));
         Require(basalt.GetQueueStats().Done == 1, "SQL queue aggregate did not report completion.");
+        Require(basalt.GetPerformanceStats().Completed >= 1 && basalt.GetPerformanceStats().AverageExecutionDuration.HasValue, "SQL performance aggregate did not report the completed execution.");
         Require(basalt.ListExecutions(new ExecutionQuery { States = new[] { ExecutionState.Done }, Take = 10 }).Single().JobKey == "sql.observability.probe", "SQL filtered execution did not resolve its job key.");
         Require(basalt.ListWorkers().Any(x => x.LastHeartbeatAt.HasValue && x.MachineName != null && x.ProcessId.HasValue), "SQL worker heartbeat was not observable.");
         await basalt.StopAsync();
