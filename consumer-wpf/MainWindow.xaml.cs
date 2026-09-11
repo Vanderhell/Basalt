@@ -15,7 +15,7 @@ public partial class MainWindow : Window
 {
     private static int _emailAttempts;
     private readonly string _embeddedPath = Path.Combine(Path.GetTempPath(), "basalt-wpf-demo");
-    public MainWindow() { InitializeComponent(); ConnectionString.Text = Environment.GetEnvironmentVariable("BASALT_DEMO_SQL") ?? string.Empty; }
+    public MainWindow() { InitializeComponent(); ConnectionString.Text = Environment.GetEnvironmentVariable("BASALT_DEMO_SQL") ?? string.Empty; if (!string.IsNullOrWhiteSpace(ConnectionString.Text)) Provider.SelectedIndex = 1; }
 
     private async void RunClick(object sender, RoutedEventArgs e)
     {
@@ -84,7 +84,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private BasaltApplication Open(bool sql) => sql ? Basalt.SqlServer(ConnectionString.Text, o => { o.Schema = "basalt_wpf_demo"; o.SchemaManagement = SchemaManagement.AutoMigrate; }) : Basalt.Embedded(_embeddedPath);
+    private BasaltApplication Open(bool sql) => sql ? Basalt.SqlServer(ConnectionString.Text, o => o.SchemaManagement = SchemaManagement.AutoMigrate) : Basalt.Embedded(_embeddedPath);
     private static void Register(BasaltApplication basalt) { basalt.On<GenerateReportJob>("reports.generate", (job, context, ct) => Task.CompletedTask); basalt.On<SendEmailJob>("email.send", (job, context, ct) => { if (Interlocked.Increment(ref _emailAttempts) == 1) throw new InvalidOperationException("Demo retry."); return Task.CompletedTask; }); basalt.On<CleanupJob>("maintenance.cleanup", (job, context, ct) => Task.CompletedTask); }
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout) { DateTime deadline = DateTime.UtcNow + timeout; while (DateTime.UtcNow < deadline) { if (condition()) return; await Task.Delay(50); } throw new TimeoutException("A demo execution did not reach Done."); }
     private void Write(string value) => Output.AppendText(value + Environment.NewLine);

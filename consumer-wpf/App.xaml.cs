@@ -11,7 +11,8 @@ public partial class App : Application
     {
         base.OnStartup(e);
         var window = new MainWindow();
-        if (!e.Args.Contains("--smoke", StringComparer.OrdinalIgnoreCase)) { MainWindow = window; window.Show(); return; }
+        bool smoke = e.Args.Contains("--smoke", StringComparer.OrdinalIgnoreCase) || e.Args.Contains("--smoke-sql", StringComparer.OrdinalIgnoreCase);
+        if (!smoke) { MainWindow = window; window.Show(); return; }
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
         try { if (e.Args.Contains("--smoke-sql", StringComparer.OrdinalIgnoreCase)) await window.RunSqlSmokeAsync(); else await window.RunEmbeddedSmokeAsync(); Environment.ExitCode = 0; }
         catch { Environment.ExitCode = 1; }
