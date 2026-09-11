@@ -41,8 +41,10 @@ jobs:
           dotnet build consumer-smoke/Consumer.csproj -c Debug
           dotnet run --project consumer-smoke/Consumer.csproj -c Debug --no-build
 
-      - name: Build WPF .NET Framework 4.7.2 consumer
-        run: dotnet build consumer-wpf/ConsumerWpf.csproj -c Debug
+      - name: Build and run WPF .NET Framework 4.7.2 consumer
+        run: |
+          dotnet build consumer-wpf/ConsumerWpf.csproj -c Debug
+          ./consumer-wpf/bin/Debug/net472/ConsumerWpf.exe --smoke
 
       - name: Build dashboard and run observability smoke
         run: |
