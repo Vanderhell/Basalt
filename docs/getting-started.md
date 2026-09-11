@@ -1,6 +1,6 @@
-# Getting started
+# Getting started with Basalt.NET
 
-Basalt is consumed from the repository through project references. Applications use the same job API with either storage provider.
+Basalt.NET is consumed from the repository through project references. Applications use the same job API with either storage provider.
 
 ## Embedded
 

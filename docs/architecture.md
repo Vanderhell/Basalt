@@ -1,4 +1,4 @@
-# Architecture
+# Basalt.NET architecture
 
 ```text
 Application

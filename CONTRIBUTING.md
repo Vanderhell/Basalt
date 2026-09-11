@@ -1,6 +1,6 @@
-# Contributing to Basalt
+# Contributing to Basalt.NET
 
-Thank you for helping improve Basalt. Please open an issue before a large change, especially one affecting the public API or durable formats.
+Thank you for helping improve Basalt.NET. Please open an issue before a large change, especially one affecting the public API or durable formats.
 
 ## Development setup
 

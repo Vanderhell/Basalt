@@ -10,7 +10,7 @@
     <Description>Local durable background jobs, scheduling and workflow engine for .NET applications.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>jobs;durable;background;WPF;scheduling;workflow</PackageTags>
-    <RepositoryUrl>https://github.com/Vanderhell/Basalt</RepositoryUrl>
+    <RepositoryUrl>https://github.com/Vanderhell/Basalt.NET</RepositoryUrl>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
   </PropertyGroup>

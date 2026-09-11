@@ -1,6 +1,6 @@
-# Basalt WPF demo
+# Basalt.NET WPF demo
 
-`ConsumerWpf` is a real .NET Framework 4.7.2 WPF application using only the public managed Basalt API.
+`ConsumerWpf` is a real .NET Framework 4.7.2 WPF application using only the public managed Basalt.NET API.
 
 Run it with `dotnet run --project consumer-wpf/ConsumerWpf.csproj`. Choose **Embedded** for a local durable store, or choose **SQL Server** and enter a connection string. The SQL demo uses Basalt's standard `basalt` schema in the selected database, so use an application-owned or test database.
 

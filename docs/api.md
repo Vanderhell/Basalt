@@ -1,4 +1,4 @@
-# Basalt public .NET API
+# Basalt.NET public API
 
 ## Getting started
 

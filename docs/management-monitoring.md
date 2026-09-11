@@ -1,4 +1,4 @@
-# Management and monitoring
+# Basalt.NET management and monitoring
 
 Basalt management is storage-neutral. Applications and the dashboard use `BasaltApplication`; they never read Embedded files or SQL Server tables directly.
 

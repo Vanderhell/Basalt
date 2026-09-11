@@ -1,4 +1,4 @@
-# Durability contract
+# Basalt.NET durability contract
 
 ## At-least-once execution
 

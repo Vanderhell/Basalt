@@ -1,8 +1,8 @@
-# Security policy
+# Basalt.NET security policy
 
 ## Supported versions
 
-Until Basalt reaches a stable release, security fixes target the latest commit on `main`.
+Basalt.NET security fixes target the latest commit on `main`.
 
 ## Reporting a vulnerability
 

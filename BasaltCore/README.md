@@ -1,6 +1,6 @@
-# Basalt
+# Basalt.NET
 
-Basalt is a local durable background-job engine for .NET applications.
+Basalt.NET is a local durable background-job engine for .NET applications.
 
 The v1 contract is at-least-once delivery: handlers must be idempotent. A
 successful enqueue confirms durable submission, not handler completion. Native

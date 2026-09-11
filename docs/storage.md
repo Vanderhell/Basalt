@@ -1,4 +1,4 @@
-# Choosing storage
+# Choosing Basalt.NET storage
 
 | | Embedded | SQL Server |
 |---|---|---|

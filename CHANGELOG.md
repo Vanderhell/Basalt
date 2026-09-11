@@ -1,6 +1,6 @@
-# Changelog
+# Basalt.NET changelog
 
-All notable changes to Basalt are documented here.
+All notable changes to Basalt.NET are documented here.
 
 This project follows [Semantic Versioning](https://semver.org/): incompatible public or durable-format changes require a major version, backward-compatible features require a minor version, and backward-compatible fixes require a patch version. Prerelease identifiers may be used before a stable release.
 

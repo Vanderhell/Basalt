@@ -1,4 +1,4 @@
-# Cookbook
+# Basalt.NET cookbook
 
 These recipes assume registered job types and a started `BasaltApplication` unless shown otherwise.
 

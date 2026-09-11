@@ -1,15 +1,15 @@
-# Basalt
+# Basalt.NET
 
 <p align="center">
-  <img src="images/logo3.png" alt="Basalt" width="640" />
+  <img src="images/logo_3.png" alt="Basalt.NET" width="640" />
 </p>
 
 **Durable background jobs for .NET -- embedded when local, SQL Server when shared.**
 
-[![CI](https://github.com/Vanderhell/Basalt/actions/workflows/ci.yml/badge.svg)](https://github.com/Vanderhell/Basalt/actions/workflows/ci.yml)
+[![CI](https://github.com/Vanderhell/Basalt.NET/actions/workflows/ci.yml/badge.svg)](https://github.com/Vanderhell/Basalt.NET/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
-Basalt is a lightweight durable job, scheduling, and static-workflow engine for .NET applications. Run it inside an application with embedded storage, or let multiple processes share the same queue through SQL Server -- with the same managed API.
+Basalt.NET is a lightweight durable job, scheduling, and static-workflow engine for .NET applications. Run it inside an application with embedded storage, or let multiple processes share the same queue through SQL Server -- with the same managed API.
 
 No separate job server is required.
 

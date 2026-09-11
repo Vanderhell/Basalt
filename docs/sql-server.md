@@ -1,4 +1,4 @@
-# SQL Server provider
+# Basalt.NET SQL Server provider
 
 ## Configuration
 
